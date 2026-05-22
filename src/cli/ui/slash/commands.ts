@@ -137,14 +137,14 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     summary: "keyboard + mouse + copy/paste reference",
   },
   {
-    cmd: "copy",
-    group: "chat",
-    summary: "vim/tmux-style copy mode — j/k navigate, v select, y yank to clipboard",
-  },
-  {
     cmd: "feedback",
     group: "info",
     summary: "open a GitHub issue with diagnostic info copied to clipboard",
+  },
+  {
+    cmd: "about",
+    group: "info",
+    summary: "project info — version, website, repo, license",
   },
 
   { cmd: "sessions", group: "session", summary: "list saved sessions (current marked with ▸)" },
@@ -332,10 +332,10 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   {
     cmd: "search-engine",
     group: "advanced",
-    argsHint: "<mojeek|searxng|metaso> [<endpoint>]",
+    argsHint: "<mojeek|searxng|metaso|tavily|perplexity|exa> [<key>]",
     summary:
-      "switch web search backend — mojeek (default, no deps), searxng (self-hosted), or metaso (free quota 100/d)",
-    argCompleter: ["mojeek", "searxng", "metaso"],
+      "switch web search backend — mojeek (default, no deps), searxng (self-hosted), metaso (free 100/d), tavily (free 1000/mo), perplexity (AI-native), or exa (AI-native). Provider with no key prompts inline config.",
+    argCompleter: ["mojeek", "searxng", "metaso", "tavily", "perplexity", "exa"],
     aliases: ["se"],
   },
   {

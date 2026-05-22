@@ -18,13 +18,16 @@ import {
   loadFilesystemOutlineThresholdBytes,
   loadIndexConfig,
   loadIndexUserConfig,
+  loadMouseWheelRows,
   loadPricingOverride,
   loadProjectPathAllowed,
   loadProjectShellAllowed,
+  loadProxyConfig,
   loadRateLimit,
   loadReasoningEffort,
   loadSemanticEmbeddingUserConfig,
   loadTheme,
+  loadToolRateLimit,
   markEditModeHintShown,
   readConfig,
   redactKey,
@@ -181,6 +184,89 @@ describe("config", () => {
     expect(loadRateLimit(path)).toBeUndefined();
     writeConfig({ rateLimit: { rpm: 1.5 } }, path);
     expect(loadRateLimit(path)).toBeUndefined();
+  });
+
+  it("loads proxy.disabled + proxy.noProxy[] when present, drops blank entries", () => {
+    writeConfig(
+      {
+        proxy: {
+          disabled: true,
+          noProxy: ["internal.corp.example", "", "  ", ".workspace.lan"],
+        },
+      },
+      path,
+    );
+    expect(loadProxyConfig(path)).toEqual({
+      disabled: true,
+      noProxy: ["internal.corp.example", ".workspace.lan"],
+    });
+
+    writeConfig({}, path);
+    expect(loadProxyConfig(path)).toEqual({});
+  });
+
+  it("loads toolRateLimit with defaults and opt-out", () => {
+    writeConfig(
+      {
+        toolRateLimit: {
+          aggregate: { maxCalls: 5, windowSeconds: 10 },
+          tools: {
+            run_command: { maxCalls: 2, windowSeconds: 3 },
+            run_background: false,
+          },
+        },
+      },
+      path,
+    );
+    expect(loadToolRateLimit(path)).toMatchObject({
+      aggregate: { maxCalls: 5, windowSeconds: 10 },
+      tools: {
+        run_command: { maxCalls: 2, windowSeconds: 3 },
+        run_background: false,
+      },
+    });
+
+    writeConfig({ toolRateLimit: { enabled: false } }, path);
+    expect(loadToolRateLimit(path)).toBe(false);
+
+    writeConfig({ toolRateLimit: { aggregate: { maxCalls: 0, windowSeconds: 1.5 } } }, path);
+    expect(loadToolRateLimit(path)).toMatchObject({
+      aggregate: { maxCalls: 200, windowSeconds: 60 },
+    });
+  });
+
+  it("loads mouseWheelRows when set, clamps to [1,10], drops invalid (#1494)", () => {
+    writeConfig({ mouseWheelRows: 3 }, path);
+    expect(loadMouseWheelRows(path)).toBe(3);
+
+    writeConfig({ mouseWheelRows: 99 }, path);
+    expect(loadMouseWheelRows(path)).toBe(10);
+
+    writeConfig({ mouseWheelRows: 0 }, path);
+    expect(loadMouseWheelRows(path)).toBeUndefined();
+
+    writeConfig({ mouseWheelRows: -1 }, path);
+    expect(loadMouseWheelRows(path)).toBeUndefined();
+
+    writeConfig({ mouseWheelRows: 2.5 }, path);
+    expect(loadMouseWheelRows(path)).toBeUndefined();
+
+    writeConfig({ mouseWheelRows: "3" as unknown as number }, path);
+    expect(loadMouseWheelRows(path)).toBeUndefined();
+
+    writeConfig({}, path);
+    expect(loadMouseWheelRows(path)).toBeUndefined();
+  });
+
+  it("loads proxy.bypassDeepSeekDirect when set (#1497)", () => {
+    writeConfig({ proxy: { bypassDeepSeekDirect: false } }, path);
+    expect(loadProxyConfig(path)).toEqual({ bypassDeepSeekDirect: false });
+
+    writeConfig({ proxy: { bypassDeepSeekDirect: true } }, path);
+    expect(loadProxyConfig(path)).toEqual({ bypassDeepSeekDirect: true });
+
+    writeConfig({ proxy: { bypassDeepSeekDirect: "yes" } as never }, path);
+    expect(loadProxyConfig(path)).toEqual({});
   });
 
   it("redactKey hides the middle", () => {

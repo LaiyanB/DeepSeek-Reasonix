@@ -3,6 +3,7 @@
 import { promises as fs } from "node:fs";
 import * as pathMod from "node:path";
 import picomatch from "picomatch";
+import { decodeFileBuffer, encodeFile } from "../code/file-encoding.js";
 import { addProjectPathAllowed, loadProjectPathAllowed } from "../config.js";
 import { type ConfirmationChoice, pauseGate as defaultPauseGate } from "../core/pause-gate.js";
 import { DEFAULT_INDEX_EXCLUDES } from "../index/config.js";
@@ -42,8 +43,13 @@ const HARD_MAX_FILE_BYTES = 32 * 1024 * 1024;
 /** Lines shown for orientation when a file is too big for full content. */
 const OUTLINE_HEAD_LINES = 80;
 
-/** Skipped unless `include_deps:true` — shared with the semantic indexer via DEFAULT_INDEX_EXCLUDES. */
-const SKIP_DIR_NAMES: ReadonlySet<string> = new Set(DEFAULT_INDEX_EXCLUDES.dirs);
+// Skipped unless `include_deps:true`. Derived from the semantic indexer's exclude
+// list, minus `.reasonix` — the indexer shouldn't embed session logs / cache, but
+// user skills live at `<root>/.reasonix/skills/` (and `~/.reasonix/skills/`) and
+// must stay reachable to read_file / search_files / search_content (#1357).
+const SKIP_DIR_NAMES: ReadonlySet<string> = new Set(
+  DEFAULT_INDEX_EXCLUDES.dirs.filter((d) => d !== ".reasonix"),
+);
 
 /** First line of binary defense; NUL-byte sniff is the second (catches mislabeled `.txt`). */
 const BINARY_EXTENSIONS: ReadonlySet<string> = new Set(DEFAULT_INDEX_EXCLUDES.exts);
@@ -275,7 +281,7 @@ export function registerFilesystemTools(
         return `[refused: ${rel} appears to be binary (${formatBytes(sizeBytes)}) — read_file returns text only. Use get_file_info for stat.]`;
       }
 
-      const text = raw.toString("utf8");
+      const { text } = decodeFileBuffer(raw);
       let lines = text.split(/\r?\n/);
       // Most files end with '\n' which splits into an empty trailing
       // entry; drop it so head/tail/range counts match the user's
@@ -648,7 +654,13 @@ export function registerFilesystemTools(
     fn: async (args: { path: string; content: string }, ctx?: ToolCallContext) => {
       const abs = await safePath(args.path, "write_file", ctx, "write");
       await fs.mkdir(pathMod.dirname(abs), { recursive: true });
-      await fs.writeFile(abs, args.content, "utf8");
+      let encoding: ReturnType<typeof decodeFileBuffer>["encoding"] = "utf8";
+      try {
+        encoding = decodeFileBuffer(await fs.readFile(abs)).encoding;
+      } catch {
+        // New file or unreadable — fall back to utf8.
+      }
+      await fs.writeFile(abs, encodeFile(args.content, encoding));
       return `wrote ${args.content.length} chars to ${displayRel(rootDir, abs)}`;
     },
   });

@@ -4,7 +4,6 @@ import { setLang, t, useLang } from "../i18n";
 import { I } from "../icons";
 import type { McpSpecInfo, SettingsPatch, SkillInfo } from "../protocol";
 import {
-  describeQQAccessLabel,
   describeQQRowSummary,
   getQQConnectIntent,
   getQQStatusLabel,
@@ -57,6 +56,8 @@ export function SettingsModal({
   onSetFontScale,
   fontFamily,
   onSetFontFamily,
+  customFontFamily,
+  onSetCustomFontFamily,
   initialPage,
   mcpSpecs,
   mcpBridged,
@@ -86,6 +87,8 @@ export function SettingsModal({
   onSetFontScale: (scale: FontScale) => void;
   fontFamily: FontFamily;
   onSetFontFamily: (family: FontFamily) => void;
+  customFontFamily: string;
+  onSetCustomFontFamily: (family: string) => void;
   initialPage?: PageId;
   mcpSpecs: McpSpecInfo[];
   mcpBridged: boolean;
@@ -154,6 +157,8 @@ export function SettingsModal({
                 onSetFontScale={onSetFontScale}
                 fontFamily={fontFamily}
                 onSetFontFamily={onSetFontFamily}
+                customFontFamily={customFontFamily}
+                onSetCustomFontFamily={onSetCustomFontFamily}
                 onSave={onSave}
                 onPickWorkspace={onPickWorkspace}
               />
@@ -235,7 +240,7 @@ export function QQChannelSection({
     sandbox: true,
     enabled: false,
     configured: false,
-    connected: false,
+    runtimeState: "disconnected",
     access: "open (unbound)",
   };
   const [appId, setAppId] = useState(current.appId ?? "");
@@ -253,7 +258,6 @@ export function QQChannelSection({
   return (
     <section className="section">
       <div className="stitle">{t("settings.qqSection")}</div>
-      <div className="qq-runtime-note">{t("settings.qqRuntimeNote")}</div>
       {!configureOpen ? (
         <div className="setting-row qq-setting-row">
           <div className="l">
@@ -261,32 +265,33 @@ export function QQChannelSection({
             <div className="h">{describeQQRowSummary(current)}</div>
           </div>
           <div className="qq-row-actions">
-            <span className={`qq-status-badge ${current.enabledForCli ? "on" : "off"}`}>
-              {getQQStatusLabel(current)}
-            </span>
             <button
               type="button"
-              className="btn"
+              className={`btn qq-status-btn qq-status-${
+                current.runtimeState === "connected"
+                  ? "on"
+                  : current.runtimeState === "connecting"
+                    ? "connecting"
+                    : current.runtimeState === "failed"
+                      ? "failed"
+                      : "off"
+              }`}
               onClick={() => {
                 if (getQQConnectIntent(current) === "configure") {
                   onOpenConfigure();
                   return;
                 }
+                if (current.runtimeState === "connected") {
+                  onDisconnect();
+                  return;
+                }
                 onConnect();
               }}
             >
-              {t("settings.qqConnect")}
+              {getQQStatusLabel(current)}
             </button>
             <button type="button" className="btn" onClick={onOpenConfigure}>
               {t("settings.qqConfigure")}
-            </button>
-            <button
-              type="button"
-              className="btn"
-              disabled={!current.enabledForCli}
-              onClick={onDisconnect}
-            >
-              {t("settings.qqDisconnect")}
             </button>
           </div>
         </div>
@@ -326,7 +331,7 @@ export function QQChannelSection({
           </div>
           <div className="setting-row">
             <div className="l">
-              <div className="n">{t("settings.environment")}</div>
+              <div className="n">{t("settings.qqEnvironment")}</div>
             </div>
             <div className="seg-ctrl">
               <button type="button" data-on={sandbox} onClick={() => setSandbox(true)}>
@@ -339,11 +344,10 @@ export function QQChannelSection({
           </div>
           <div className="setting-row">
             <div className="l">
-              <div className="n">{t("settings.qqAccess")}</div>
-              <div className="h">{describeQQAccessLabel(current.access)}</div>
+              <div className="n">{t("settings.qqApplyLabel")}</div>
             </div>
             <button type="button" className="btn" onClick={onOpenApplyLink}>
-              {t("settings.qqApply")}
+              {t("settings.qqApplyAction")}
             </button>
           </div>
           <div className="qq-config-actions">
@@ -367,9 +371,6 @@ export function QQChannelSection({
             >
               {t("settings.qqSaveAndConnect")}
             </button>
-            <button type="button" className="btn" onClick={onDisconnect}>
-              {t("settings.qqDisconnect")}
-            </button>
           </div>
         </div>
       )}
@@ -387,6 +388,8 @@ function PageGeneral({
   onSetFontScale,
   fontFamily,
   onSetFontFamily,
+  customFontFamily,
+  onSetCustomFontFamily,
   onSave,
   onPickWorkspace,
 }: {
@@ -399,11 +402,22 @@ function PageGeneral({
   onSetFontScale: (scale: FontScale) => void;
   fontFamily: FontFamily;
   onSetFontFamily: (family: FontFamily) => void;
+  customFontFamily: string;
+  onSetCustomFontFamily: (family: string) => void;
   onSave: (patch: SettingsPatch) => void;
   onPickWorkspace: () => void;
 }) {
   const [editorDraft, setEditorDraft] = useState(settings.editor ?? "");
+  const [customFontDraft, setCustomFontDraft] = useState(customFontFamily);
   const lang = useLang();
+  useEffect(() => {
+    setCustomFontDraft(customFontFamily);
+  }, [customFontFamily]);
+  const commitCustomFont = (value: string) => {
+    const next = value.trim();
+    setCustomFontDraft(next);
+    onSetCustomFontFamily(next);
+  };
   return (
     <>
       <section className="section">
@@ -523,8 +537,38 @@ function PageGeneral({
             >
               {t("settings.fontFamilySerif")}
             </button>
+            <button
+              type="button"
+              data-on={fontFamily === FONT_FAMILY.CUSTOM}
+              onClick={() => onSetFontFamily(FONT_FAMILY.CUSTOM)}
+            >
+              {t("settings.fontFamilyCustom")}
+            </button>
           </div>
         </div>
+        {fontFamily === FONT_FAMILY.CUSTOM && (
+          <div className="setting-row">
+            <div className="l">
+              <div className="n">{t("settings.customFontFamily")}</div>
+              <div className="h">{t("settings.customFontFamilyHint")}</div>
+            </div>
+            <input
+              className="field font-family-field"
+              value={customFontDraft}
+              placeholder={`"Microsoft YaHei", "PingFang SC", sans-serif`}
+              onChange={(e) => {
+                setCustomFontDraft(e.target.value);
+                onSetCustomFontFamily(e.target.value);
+              }}
+              onBlur={(e) => commitCustomFont(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.currentTarget.blur();
+                }
+              }}
+            />
+          </div>
+        )}
         <div className="setting-row">
           <div className="l">
             <div className="n">{t("settings.language")}</div>
@@ -1004,6 +1048,7 @@ function PageBilling({
   currency: "CNY" | "USD";
 }) {
   const symbol = currency === "CNY" ? "¥" : "$";
+  const sessionCost = currency === "CNY" ? usage.totalCostUsd * 7.2 : usage.totalCostUsd;
   const totalTokens = usage.cacheHitTokens + usage.cacheMissTokens;
   const hitPct = totalTokens > 0 ? Math.round((usage.cacheHitTokens / totalTokens) * 100) : 0;
   return (
@@ -1025,7 +1070,7 @@ function PageBilling({
         <div className="bill-card">
           <div className="l">{t("settings.sessionCost")}</div>
           <div className="v">
-            {symbol} {usage.totalCostUsd.toFixed(4)}
+            {symbol} {sessionCost.toFixed(4)}
           </div>
           <div className="sub">prompt {usage.totalPromptTokens.toLocaleString()} t</div>
         </div>

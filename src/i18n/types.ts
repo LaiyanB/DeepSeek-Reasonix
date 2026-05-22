@@ -43,6 +43,16 @@ export interface TranslationSchema {
   };
   sessions: {
     emptyHint: string;
+    listHeader: string;
+    inspectHint: string;
+    resumeHint: string;
+    noSession: string;
+    lookedAt: string;
+    noIdleSessions: string;
+    wouldPrune: string;
+    dryRunHint: string;
+    prunedCount: string;
+    daysInvalid: string;
   };
   ui: {
     welcome: string;
@@ -96,6 +106,8 @@ export interface TranslationSchema {
     tipShownOnce: string;
     modelOverride: string;
     noSession: string;
+    noMouseHint: string;
+    noProxyHint: string;
     resumeHint: string;
     newHint: string;
     transcriptHint: string;
@@ -185,6 +197,8 @@ export interface TranslationSchema {
     verboseOn: string;
     verboseOff: string;
     commandFailed: string;
+    steerInjected: string;
+    steerCommandRejected: string;
     btwUsage: string;
     btwHeader: string;
     btwFailed: string;
@@ -214,6 +228,37 @@ export interface TranslationSchema {
     planStoppedAt: string;
     revisingAfter: string;
     historyScrollHint: string;
+    editHistoryTitle: string;
+    editHistoryNoCodeMode: string;
+    editHistoryNoEdits: string;
+    editHistoryNoShowId: string;
+    editHistoryIdNotFound: string;
+    editHistoryLookupFailed: string;
+    editHistoryBatchNoFile: string;
+    editHistoryNoEdits2: string;
+    editHistoryStatusApplied: string;
+    editHistoryStatusPartial: string;
+    editHistoryStatusUndone: string;
+    editHistoryHelpShow: string;
+    editHistoryHelpUndo: string;
+    editHistoryAlreadyReverted: string;
+    editHistoryRevertFile: string;
+    mcpFailed: string;
+    mcpWarn: string;
+    unknownTheme: string;
+    themeSaved: string;
+  };
+  mcpBrowse: {
+    noResources: string;
+    readOne: string;
+    noPrompts: string;
+    fetchOne: string;
+    noServerForResource: string;
+    resourceHint: string;
+    readFailed: string;
+    noServerForPrompt: string;
+    promptHint: string;
+    fetchFailed: string;
   };
   hooks: {
     head: string;
@@ -257,6 +302,7 @@ export interface TranslationSchema {
     balance402: string;
     badparam422: string;
     badrequest400: string;
+    concurrency429: string;
     deepseek5xxHead: string;
     deepseek5xxReachable: string;
     deepseek5xxUnreachable: string;
@@ -406,6 +452,8 @@ export interface TranslationSchema {
     mcpLoading: string;
     /** Word used in the context-usage pill (rendered as `ctx 72% · 144K/200K`). */
     ctx: string;
+    /** Hint shown next to the ⚑ icon — triggers the shortcut help modal. */
+    shortcutsHint: string;
   };
   editMode: {
     plan: string;
@@ -437,6 +485,10 @@ export interface TranslationSchema {
     editorExited: string;
     /** Typeahead queue indicator, e.g. "▸ 3 lines staged · esc recall" */
     typeaheadStaged: string;
+    /** Placeholder shown when steerBusy is active. */
+    steerPlaceholder: string;
+    /** Status-line hint shown when steerBusy is active. */
+    steerHint: string;
   };
   pathConfirm: {
     title: string;
@@ -628,6 +680,7 @@ export interface TranslationSchema {
     endpointMustBeHttp: string;
     cannotReach: string;
     searxngNoResults: string;
+    metasoMissingKey: string;
     metasoDailyLimit: string;
     metasoUnauthorized: string;
     metasoRateLimit: string;
@@ -639,6 +692,16 @@ export interface TranslationSchema {
     tavilyRateLimit: string;
     tavilyServerError: string;
     tavilyParseError: string;
+    perplexityMissingKey: string;
+    perplexityUnauthorized: string;
+    perplexityRateLimit: string;
+    perplexityServerError: string;
+    perplexityParseError: string;
+    exaMissingKey: string;
+    exaUnauthorized: string;
+    exaRateLimit: string;
+    exaServerError: string;
+    exaParseError: string;
     fetchStatus: string;
     fetchRateLimit429: string;
     fetchForbidden403: string;
@@ -729,19 +792,6 @@ export interface TranslationSchema {
     categoryProject: string;
     categoryReference: string;
   };
-  copyMode: {
-    title: string;
-    help: string;
-    statusBar: string;
-    statusYanked: string;
-    statusEmpty: string;
-    empty: string;
-    labelUser: string;
-    labelAssistant: string;
-    labelReasoning: string;
-    yankedToast: string;
-    yankedToastFile: string;
-  };
   mcpHealth: {
     noData: string;
     healthy: string;
@@ -818,6 +868,8 @@ export interface TranslationSchema {
     failedSetupHint: string;
     failedSetupConfigHint: string;
     abortedHint: string;
+    toolsReady: string;
+    warnLabel: string;
   };
   checkpointPicker: {
     title: string;
@@ -863,5 +915,63 @@ export interface TranslationSchema {
     noRecords: string;
     untracked: string;
     churned: string;
+  };
+  builtinSkills: {
+    explore: string;
+    research: string;
+    review: string;
+    securityReview: string;
+    test: string;
+  };
+  shortcutsHelp: {
+    title: string;
+    groupInput: string;
+    groupNavigation: string;
+    groupSession: string;
+    groupSystem: string;
+    descEnter: string;
+    descShiftEnter: string;
+    descCtrlEnter: string;
+    descCtrlJ: string;
+    descCtrlU: string;
+    descCtrlW: string;
+    descCtrlP: string;
+    descCtrlX: string;
+    descArrows: string;
+    descPgUpDown: string;
+    descCtrlL: string;
+    descCtrlB: string;
+    descNewSession: string;
+    descListSessions: string;
+    descSwitchModel: string;
+    descSwitchPreset: string;
+    descSwitchTheme: string;
+    descCtrlC: string;
+    descEsc: string;
+    descCtrlR: string;
+    descCtrlO: string;
+    descHelp: string;
+    descShiftTab: string;
+  };
+  mcpCli: {
+    bundledCatalog: string;
+    justFetched: string;
+    cachedAge: string;
+    moreAvailable: string;
+    allLoaded: string;
+    morePagesAvailable: string;
+    installHint: string;
+    usageSearch: string;
+    usageInstall: string;
+    noMatchesFor: string;
+    matchCount: string;
+    moreLoaded: string;
+    moreMatches: string;
+    installed: string;
+    noServerFound: string;
+    noServerTryMore: string;
+    noInstallMeta: string;
+    buildSpecFailed: string;
+    alreadyInstalled: string;
   };
 }

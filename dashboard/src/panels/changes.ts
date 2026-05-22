@@ -4,7 +4,7 @@ import { h } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { ChatMessage, type ChatMsg, ToolCard, parseToolArgs } from "../components/chat-internals.js";
 import { t, useLang } from "../i18n/index.js";
-import { TOKEN, api } from "../lib/api.js";
+import { MODE, TOKEN, api } from "../lib/api.js";
 import { showToast } from "../lib/bus.js";
 import { parseHunks } from "../lib/diff-parser.js";
 // ChatStatusBar — inlined (mirrors chat.ts pattern)
@@ -1453,7 +1453,7 @@ interface PopoverItem {
   insert: string;
 }
 
-type PopoverKind = "slash" | null;
+type PopoverKind = "slash" | "mention" | null;
 
 interface ChatPaneProps {
   comments: LineComment[];
@@ -1716,6 +1716,10 @@ function ChatPane(props: ChatPaneProps) {
 
   const updatePopover = useCallback(
     async (text: string) => {
+      if (busy) {
+        setPopoverKind(null);
+        return;
+      }
       const slashMatch = /^\/([A-Za-z0-9_-]*)$/.exec(text);
       if (slashMatch) {
         const prefix = slashMatch[1]!.toLowerCase();
@@ -1732,15 +1736,42 @@ function ChatPane(props: ChatPaneProps) {
         setPopoverSel(0);
         return;
       }
+      const mentionMatch = /(?:^|\s)@([^\s@]*)$/.exec(text);
+      if (mentionMatch && MODE === "attached") {
+        const prefix = mentionMatch[1] ?? "";
+        try {
+          const r = await api<{ files: string[] }>("/files", {
+            method: "POST",
+            body: { prefix },
+          });
+          const items: PopoverItem[] = r.files.slice(0, 12).map((f) => ({
+            label: f,
+            insert: `@${f} `,
+          }));
+          setPopoverKind("mention");
+          setPopoverItems(items);
+          setPopoverSel(0);
+        } catch {
+          setPopoverKind(null);
+        }
+        return;
+      }
       setPopoverKind(null);
     },
-    [slashCommands],
+    [busy, slashCommands],
   );
 
   const applyPopover = useCallback(() => {
     const item = popoverItems[popoverSel];
     if (!item) return false;
-    setInput(item.insert);
+    if (popoverKind === "slash") {
+      setInput(item.insert);
+    } else if (popoverKind === "mention") {
+      const m = /(?:^|\s)@([^\s@]*)$/.exec(input);
+      if (!m) return false;
+      const start = input.length - m[0].length + (m[0].startsWith(" ") ? 1 : 0);
+      setInput(`${input.slice(0, start)}${item.insert}`);
+    }
     setPopoverKind(null);
     return true;
   }, [popoverItems, popoverSel, popoverKind, input]);
@@ -1757,7 +1788,6 @@ function ChatPane(props: ChatPaneProps) {
 
   const send = useCallback(async () => {
     const text = input.trim();
-    if (busy) return;
     if (!text && props.comments.length === 0) return;
     setError(null);
 
@@ -1783,7 +1813,7 @@ function ChatPane(props: ChatPaneProps) {
     } catch (err) {
       setError((err as Error).message);
     }
-  }, [input, busy, props.comments]);
+  }, [input, props.comments]);
 
   const abort = useCallback(async () => {
     try {
@@ -1949,7 +1979,7 @@ function ChatPane(props: ChatPaneProps) {
               popoverKind && popoverItems.length > 0
                 ? html`
                   <div class="popover" style="position:absolute;bottom:calc(100% + 6px);left:0;width:380px;max-height:280px;overflow-y:auto;z-index:10">
-                    <div class="popover-h">${t("chat.slashCommands")}</div>
+                    <div class="popover-h">${popoverKind === "slash" ? t("chat.slashCommands") : t("chat.projectFiles")}</div>
                     ${popoverItems.map(
                       (it, i) => html`
                         <div
@@ -1960,7 +1990,7 @@ function ChatPane(props: ChatPaneProps) {
                             applyPopover();
                           }}
                         >
-                          <span class="g">/</span>
+                          <span class="g">${popoverKind === "slash" ? "/" : "@"}</span>
                           <span class="name">${it.label}</span>
                           ${it.meta ? html`<span class="meta">${it.meta}</span>` : null}
                         </div>
@@ -1973,19 +2003,18 @@ function ChatPane(props: ChatPaneProps) {
             <textarea
               class="input"
               style=${{ width: "100%", resize: "none", minHeight: "36px", fontFamily: "inherit", fontSize: "13px", padding: "8px 10px", lineHeight: "1.4", background: "var(--bg-input)", border: "1px solid var(--bd)", borderRadius: "4px", color: "var(--fg-0)" }}
-              placeholder=${busy ? t("chat.placeholderBusy") : props.comments.length > 0 ? "总结评论..." : t("changes.chatPlaceholder")}
+              placeholder=${busy ? t("chat.placeholderSteerBusy") : props.comments.length > 0 ? "总结评论..." : t("changes.chatPlaceholder")}
               value=${input}
               onInput=${onInput}
               onKeyDown=${onKeyDown}
               onCompositionStart=${onCompositionStart}
               onCompositionEnd=${onCompositionEnd}
               onBlur=${() => setTimeout(() => setPopoverKind(null), 150)}
-              disabled=${busy}
               rows="2"
             />
           </div>
           <div style=${{ display: "flex", flexDirection: "column", gap: "6px", flexShrink: 0 }}>
-            <button class="primary" onClick=${send} disabled=${busy || (!input.trim() && props.comments.length === 0)} style=${{ padding: "8px 12px", borderRadius: "4px" }}>${t("changes.chatSend")}</button>
+            <button class="primary" onClick=${send} disabled=${!input.trim() && props.comments.length === 0} style=${{ padding: "8px 12px", borderRadius: "4px" }}>${t("changes.chatSend")}</button>
             <div style=${{ display: "flex", gap: "6px" }}>
               <button onClick=${newConversation} title=${t("changes.newTitle")}>${t("changes.newConversation")}</button>
               <button onClick=${clearScrollback} title=${t("changes.clearTitle")}>${t("changes.clearConversation")}</button>

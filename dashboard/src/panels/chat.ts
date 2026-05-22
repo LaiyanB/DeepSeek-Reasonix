@@ -7,6 +7,7 @@ import {
   ChoiceModal,
   EditReviewModal,
   type OnResolve,
+  PathModal,
   PickerModal,
   PlanModal,
   RevisionModal,
@@ -626,6 +627,8 @@ export function ChatPanel() {
         modal
           ? modal.kind === "shell"
             ? html`<${ShellModal} modal=${modal} onResolve=${resolveModal} />`
+            : modal.kind === "path"
+            ? html`<${PathModal} modal=${modal} onResolve=${resolveModal} />`
             : modal.kind === "choice"
               ? html`<${ChoiceModal} modal=${modal} onResolve=${resolveModal} />`
               : modal.kind === "plan"
@@ -705,6 +708,10 @@ const ChatInput = memo(function ChatInput({
 
   const updatePopover = useCallback(
     async (text: string) => {
+      if (busy) {
+        setPopoverKind(null);
+        return;
+      }
       const slashMatch = /^\/([A-Za-z0-9_-]*)$/.exec(text);
       if (slashMatch) {
         const prefix = slashMatch[1]!.toLowerCase();
@@ -743,7 +750,7 @@ const ChatInput = memo(function ChatInput({
       }
       setPopoverKind(null);
     },
-    [slashCommands],
+    [busy, slashCommands],
   );
 
   const applyPopover = useCallback(() => {
@@ -763,10 +770,10 @@ const ChatInput = memo(function ChatInput({
 
   const send = useCallback(async () => {
     const text = input.trim();
-    if (!text || busy) return;
+    if (!text) return;
     const res = await onSubmit(text);
     if (res.accepted) setInput("");
-  }, [input, busy, onSubmit]);
+  }, [input, onSubmit]);
 
   const onInput = useCallback(
     (e: Event) => {
@@ -855,21 +862,20 @@ const ChatInput = memo(function ChatInput({
           : null
       }
       <textarea
-        placeholder=${busy ? t("chat.placeholderBusy") : t("chat.placeholder")}
+        placeholder=${busy ? t("chat.placeholderSteerBusy") : t("chat.placeholder")}
         value=${input}
         onInput=${onInput}
         onKeyDown=${onKeyDown}
         onCompositionStart=${onCompositionStart}
         onCompositionEnd=${onCompositionEnd}
         onBlur=${() => setTimeout(() => setPopoverKind(null), 150)}
-        disabled=${busy}
         rows="2"
       ></textarea>
       <div style="display: flex; flex-direction: column; gap: 6px; align-self: stretch; justify-content: flex-end;">
         <button
           class="primary"
           onClick=${send}
-          disabled=${busy || !input.trim()}
+          disabled=${!input.trim()}
         >${t("chat.send")}</button>
         <div style="display: flex; gap: 6px;">
           <button onClick=${onNew} title=${t("chat.newTitle")}>${t("chat.new")}</button>

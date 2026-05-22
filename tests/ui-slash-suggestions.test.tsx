@@ -96,6 +96,7 @@ describe("SlashSuggestions", () => {
     expect(matches).toHaveLength(42);
     expect(names).toContain("language");
     expect(names).toContain("btw");
+    expect(names).toContain("about");
     expect(countAdvancedCommands(true)).toBe(11);
     expect(frame).toContain("42 commands");
     expect(frame).toContain("+ 11 advanced");

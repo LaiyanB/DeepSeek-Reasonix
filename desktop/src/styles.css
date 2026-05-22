@@ -1161,9 +1161,27 @@ html[data-platform="macos"] .titlebar .tb-left {
   opacity: 0;
   transition: opacity 120ms, background 120ms, color 120ms;
 }
+.session-item .rename-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms, background 120ms, color 120ms;
+}
 .session-item:hover .delete-btn,
 .session-item:focus-within .delete-btn,
-.session-item .delete-btn:focus-visible {
+.session-item .delete-btn:focus-visible,
+.session-item:hover .rename-btn,
+.session-item:focus-within .rename-btn,
+.session-item .rename-btn:focus-visible {
   opacity: 1;
 }
 .session-item .delete-btn:hover {
@@ -1172,6 +1190,31 @@ html[data-platform="macos"] .titlebar .tb-left {
 }
 .session-item .delete-btn:focus-visible {
   outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.session-item .rename-btn:hover {
+  background: var(--panel-2, rgba(255, 255, 255, 0.06));
+  color: var(--fg);
+}
+.session-item .rename-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.session-item[data-editing="true"] {
+  cursor: default;
+}
+.session-item .body .title-edit {
+  width: 100%;
+  font: inherit;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 2px 6px;
+  outline: none;
+}
+.session-item .body .title-edit:focus {
+  border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
@@ -1882,28 +1925,29 @@ html:not([data-platform="macos"]) .shortcut kbd[data-key="mod"] {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 1px 6px;
-  border-radius: 5px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
+  padding: 0 2px;
+  border-radius: 3px;
+  background: transparent;
+  border: 0;
   color: var(--accent);
   font-family: "Geist Mono", monospace;
-  font-size: 0.82em;
+  font-size: 0.86em;
+  line-height: 1.35;
   cursor: pointer;
   vertical-align: baseline;
   text-decoration: none;
-  transition: background 0.12s, border-color 0.12s;
+  transition:
+    background 0.12s,
+    color 0.12s;
   white-space: nowrap;
 }
 .file-pill:hover {
   background: var(--accent-soft);
-  border-color: oklch(from var(--accent) l c h / 0.4);
   color: var(--accent-strong);
 }
 .file-pill.done {
   color: var(--success);
-  border-color: var(--success-soft);
-  background: var(--success-soft);
+  background: transparent;
 }
 .file-pill-icon {
   opacity: 0.6;
@@ -2794,8 +2838,8 @@ html:not([data-platform="macos"]) .shortcut kbd[data-key="mod"] {
   padding: 12px 14px 6px;
   font-size: 14px;
   line-height: 1.55;
-  min-height: 24px;
-  max-height: 220px;
+  min-height: calc(5 * 1.55em + 18px);
+  overflow-y: hidden;
   font-family: inherit;
 }
 .composer textarea::placeholder {
@@ -4292,6 +4336,9 @@ html:not([data-platform="macos"]) .cmdk-row .kb .shortcut kbd[data-key="mod"] {
 .field.mono {
   font-family: inherit;
 }
+.field.font-family-field {
+  width: min(360px, 100%);
+}
 
 .qq-setting-row {
   align-items: flex-start;
@@ -4305,38 +4352,47 @@ html:not([data-platform="macos"]) .cmdk-row .kb .shortcut kbd[data-key="mod"] {
   gap: 8px;
 }
 
-.qq-runtime-note {
-  font-size: 12px;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
-  border-radius: 8px;
-  padding: 8px 10px;
-  margin-bottom: 10px;
-  line-height: 1.5;
-}
-
-.qq-status-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 30px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  font-size: 13px;
+.qq-status-btn {
+  min-width: 88px;
+  justify-content: center;
   font-weight: 600;
 }
 
-.qq-status-badge.on {
-  color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 12%, transparent);
-  border-color: color-mix(in srgb, var(--ok) 35%, var(--border));
+.qq-status-btn.qq-status-on {
+  color: var(--success);
+  background: var(--success-soft);
+  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
 }
 
-.qq-status-badge.off {
-  color: var(--tone-err);
-  background: color-mix(in srgb, var(--tone-err) 10%, transparent);
-  border-color: color-mix(in srgb, var(--tone-err) 30%, var(--border));
+.qq-status-btn.qq-status-on:hover {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+}
+
+.qq-status-btn.qq-status-off {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--border));
+}
+
+.qq-status-btn.qq-status-off:hover {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+.qq-status-btn.qq-status-connecting {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+}
+
+.qq-status-btn.qq-status-failed {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--border));
+}
+
+.qq-config-card .h {
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .qq-config-card {

@@ -21,7 +21,7 @@
 import { readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { buildCodeToolset } from "../../code/setup.js";
-import { loadApiKey, loadEngineeringLifecycleMode, loadPreset, readConfig } from "../../config.js";
+import { loadApiKey, loadPreset, readConfig } from "../../config.js";
 import { loadDotenv } from "../../env.js";
 import { t } from "../../i18n/index.js";
 import { detectForeignAgentPlatform } from "../../memory/project.js";
@@ -63,6 +63,8 @@ export interface CodeOptions {
   systemAppend?: string;
   /** Path to a UTF-8 text file whose contents are appended to the code system prompt. */
   systemAppendFile?: string;
+  /** Disable SGR mouse tracking so the terminal keeps native selection and right-click behavior. */
+  noMouse?: boolean;
 }
 
 export async function codeCommand(opts: CodeOptions = {}): Promise<void> {
@@ -149,7 +151,6 @@ export async function codeCommand(opts: CodeOptions = {}): Promise<void> {
       systemAppend: opts.systemAppend,
       systemAppendFile: systemAppendFileContents,
       modelId: resolvedModel,
-      engineeringLifecycleMode: loadEngineeringLifecycleMode(),
     });
   await chatCommand({
     model: resolvedModel,
@@ -182,5 +183,6 @@ export async function codeCommand(opts: CodeOptions = {}): Promise<void> {
     dashboardPort: opts.dashboardPort,
     dashboardHost: opts.dashboardHost,
     dashboardToken: opts.dashboardToken,
+    noMouse: opts.noMouse,
   });
 }

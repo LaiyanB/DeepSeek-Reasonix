@@ -3,6 +3,7 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { z } from "zod";
 import { type ThemeName, isThemeName, resolveThemeName } from "./cli/ui/theme/tokens.js";
 import type { LanguageCode } from "./i18n/types.js";
 import {
@@ -12,6 +13,11 @@ import {
 } from "./index/config.js";
 import { type McpServerSpec, parseMcpSpec } from "./mcp/spec.js";
 import { normalizeQQAllowlist, normalizeQQOpenId } from "./qq/access.js";
+import {
+  type NormalizedToolRateLimitConfig,
+  type ToolRateLimitConfig,
+  normalizeToolRateLimitConfig,
+} from "./tools/rate-limit.js";
 
 /** Legacy `fast|smart|max` kept for back-compat with existing config.json files. */
 export type PresetName = "auto" | "flash" | "pro" | "fast" | "smart" | "max";
@@ -109,7 +115,17 @@ export interface PricingOverride {
 }
 
 export interface RateLimitConfig {
+  /** Client-side self-throttle in requests/minute — paces outbound chat calls with a min-interval timer. NOT a DeepSeek-enforced limit: DeepSeek's actual cap is concurrency, not RPM (500 for v4-pro, 2500 for v4-flash, account-wide), surfaced as HTTP 429. Set this only to be a polite neighbor on shared infra; single-user CLI rarely needs it. */
   rpm?: number;
+}
+
+export interface ProxyConfig {
+  /** Skip proxy detection entirely — equivalent to launching with `--no-proxy`. */
+  disabled?: boolean;
+  /** Additional NO_PROXY patterns (curl syntax). Additive on top of env NO_PROXY and the default DeepSeek-bypass whitelist. */
+  noProxy?: string[];
+  /** When false, route api.deepseek.com / *.deepseek.com through the proxy too (issue #1497 — corporate firewalls that block direct egress). Default true preserves the clash/v2ray US-exit-IP 403 fix. Env `REASONIX_PROXY_DEEPSEEK_DIRECT` overrides. */
+  bypassDeepSeekDirect?: boolean;
 }
 
 export interface ReasonixConfig {
@@ -143,16 +159,23 @@ export interface ReasonixConfig {
   session?: string | null;
   setupCompleted?: boolean;
   search?: boolean;
-  /** Web search engine backend: "mojeek" (default, scrapes Mojeek), "searxng" (self-hosted SearXNG), "metaso" (Metaso API), or "tavily" (LLM-friendly API, free tier). */
-  webSearchEngine?: "mojeek" | "searxng" | "metaso" | "tavily";
+  /** Web search engine backend: "mojeek" (default, scrapes Mojeek), "searxng" (self-hosted SearXNG), "metaso" (Metaso API), "tavily" (LLM-friendly API, free tier), "perplexity" (Perplexity AI), or "exa" (Exa API). */
+  webSearchEngine?: "mojeek" | "searxng" | "metaso" | "tavily" | "perplexity" | "exa";
   /** Base URL for SearXNG instance (default http://localhost:8080). */
   webSearchEndpoint?: string;
-  /** Metaso API key. Falls back to METASO_API_KEY env var, then a built-in default. */
+  /** Metaso API key. Falls back to METASO_API_KEY env var. */
   metasoApiKey?: string;
   /** Tavily API key. Falls back to TAVILY_API_KEY env var. No baked-in default — free tier is 1000/mo per account, sharing would burn out. */
   tavilyApiKey?: string;
+  /** Perplexity API key. Falls back to PERPLEXITY_API_KEY env var. Get one at https://perplexity.ai/settings/api */
+  perplexityApiKey?: string;
+  /** Exa API key. Falls back to EXA_API_KEY env var. Free 1000/mo signup at https://exa.ai */
+  exaApiKey?: string;
+
   /** TUI mouse-wheel scrolling via SGR mouse tracking. Default true. Set false to fall back to native terminal drag-select for copy (then wheel is terminal-dependent — most terminals translate wheel→arrow in alt-screen, some don't). */
   mouseTracking?: boolean;
+  /** Rows scrolled per single SGR mouse-wheel report. Default 1 — most terminals emit 2-5 reports per physical notch, so 1 already produces 2-5 rows per notch (#1419). Bump to 3-5 only if your terminal emits one report per notch and scrolling feels slow (#1494). Clamped to [1, 10]. */
+  mouseWheelRows?: number;
   dashboard?: {
     /** Pin the embedded dashboard to a fixed port — required for stable SSH tunnels. 0/absent → ephemeral. */
     port?: number;
@@ -174,6 +197,8 @@ export interface ReasonixConfig {
   projects?: {
     [absoluteRootDir: string]: {
       shellAllowed?: string[];
+      /** Project-scoped hooks are arbitrary shell commands; load only after explicit trust. */
+      hooksTrusted?: boolean;
       /** Absolute directory prefixes the user pre-approved for outside-sandbox file access (#684). */
       pathAllowed?: string[];
     };
@@ -191,12 +216,17 @@ export interface ReasonixConfig {
   skills?: {
     paths?: string[];
   };
+  /** Enable the `java_source` tool for finding and decompiling Java class source. Default off. */
+  javaSource?: boolean;
   /** User-declared extensions to the built-in memory types (#709). Unknown types round-trip even without a declaration; declaring one lets you attach a default priority + lifecycle. */
   memory?: {
     customTypes?: CustomMemoryTypeConfig[];
   };
   pricingOverride?: Record<string, PricingOverride>;
+  /** Per-app proxy override. Layered on top of HTTPS_PROXY / NO_PROXY env vars + the default DeepSeek-bypass whitelist. */
+  proxy?: ProxyConfig;
   rateLimit?: RateLimitConfig;
+  toolRateLimit?: ToolRateLimitConfig;
   /** Host-enforced engineering lifecycle. Defaults to off so opt-outs pay zero prefix cost. */
   engineeringLifecycle?: {
     mode?: EngineeringLifecycleMode;
@@ -269,19 +299,33 @@ export function memoryTypeDefaults(
   return out;
 }
 
-const DEFAULT_METASO_API_KEY = "mk-E384C1DD5E8501BB7EFE27C949AFDE5B";
-
-export function loadMetasoApiKey(path: string = defaultConfigPath()): string {
-  if (process.env.METASO_API_KEY) return process.env.METASO_API_KEY;
+export function loadMetasoApiKey(path: string = defaultConfigPath()): string | undefined {
+  if (process.env.METASO_API_KEY) return process.env.METASO_API_KEY.trim();
   const cfg = readConfig(path).metasoApiKey;
   if (cfg && typeof cfg === "string" && cfg.trim()) return cfg.trim();
-  return DEFAULT_METASO_API_KEY;
+  return undefined;
 }
 
 /** Tavily API key — env > config > undefined. Returning undefined means the caller must error out with a clear "go get one at tavily.com" message; we deliberately ship no default because the free 1000/mo quota wouldn't survive being shared. */
 export function loadTavilyApiKey(path: string = defaultConfigPath()): string | undefined {
   if (process.env.TAVILY_API_KEY) return process.env.TAVILY_API_KEY.trim();
   const cfg = readConfig(path).tavilyApiKey;
+  if (cfg && typeof cfg === "string" && cfg.trim()) return cfg.trim();
+  return undefined;
+}
+
+/** Perplexity API key — env > config > undefined. Get one at https://perplexity.ai/settings/api */
+export function loadPerplexityApiKey(path: string = defaultConfigPath()): string | undefined {
+  if (process.env.PERPLEXITY_API_KEY) return process.env.PERPLEXITY_API_KEY.trim();
+  const cfg = readConfig(path).perplexityApiKey;
+  if (cfg && typeof cfg === "string" && cfg.trim()) return cfg.trim();
+  return undefined;
+}
+
+/** Exa API key — env > config > undefined. Free 1000/mo signup at https://exa.ai */
+export function loadExaApiKey(path: string = defaultConfigPath()): string | undefined {
+  if (process.env.EXA_API_KEY) return process.env.EXA_API_KEY.trim();
+  const cfg = readConfig(path).exaApiKey;
   if (cfg && typeof cfg === "string" && cfg.trim()) return cfg.trim();
   return undefined;
 }
@@ -295,11 +339,63 @@ export function defaultConfigPath(): string {
   return join(homedir(), ".reasonix", "config.json");
 }
 
+const STRING_ARRAY_FIELDS: Array<readonly string[]> = [
+  ["mcp"],
+  ["mcpDisabled"],
+  ["recentWorkspaces"],
+  ["skills", "paths"],
+];
+
+const stringArraySchema = z.array(z.string());
+
+function sanitizeStringArrayField(
+  cfg: Record<string, unknown>,
+  segments: readonly string[],
+  filePath: string,
+): void {
+  if (segments.length === 0) return;
+  let parent: Record<string, unknown> = cfg;
+  for (let i = 0; i < segments.length - 1; i++) {
+    const seg = segments[i] as string;
+    const next = parent[seg];
+    if (!next || typeof next !== "object" || Array.isArray(next)) return;
+    parent = next as Record<string, unknown>;
+  }
+  const leaf = segments[segments.length - 1] as string;
+  const value = parent[leaf];
+  if (value === undefined) return;
+  const fieldName = segments.join(".");
+  if (!Array.isArray(value)) {
+    console.warn(`reasonix: config "${filePath}" field "${fieldName}" is not an array — ignoring`);
+    delete parent[leaf];
+    return;
+  }
+  const parsed = stringArraySchema.safeParse(value);
+  if (parsed.success) return;
+  const filtered = value.filter((x): x is string => typeof x === "string");
+  console.warn(
+    `reasonix: config "${filePath}" field "${fieldName}" had ${value.length - filtered.length} non-string item(s) — dropped`,
+  );
+  parent[leaf] = filtered;
+}
+
 export function readConfig(path: string = defaultConfigPath()): ReasonixConfig {
   try {
-    const raw = readFileSync(path, "utf8");
+    // Strip the UTF-8 BOM if a foreign writer left one in — Windows
+    // PowerShell 5's `Set-Content -Encoding UTF8` and several text
+    // editors emit `EF BB BF` at the head of the file. `JSON.parse`
+    // refuses BOM-prefixed input and throws, which used to fall
+    // through to `return {}` and silently nuke every saved field on
+    // the next read-modify-write.
+    const raw = readFileSync(path, "utf8").replace(/^\uFEFF/, "");
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") return parsed as ReasonixConfig;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const cfg = parsed as Record<string, unknown>;
+      for (const segments of STRING_ARRAY_FIELDS) {
+        sanitizeStringArrayField(cfg, segments, path);
+      }
+      return cfg as ReasonixConfig;
+    }
   } catch {
     /* missing or malformed → empty config */
   }
@@ -487,10 +583,39 @@ export function loadPricingOverride(
   return result;
 }
 
+export function loadProxyConfig(path: string = defaultConfigPath()): ProxyConfig {
+  const cfg = readConfig(path).proxy;
+  if (!cfg || typeof cfg !== "object") return {};
+  const out: ProxyConfig = {};
+  if (cfg.disabled === true) out.disabled = true;
+  if (Array.isArray(cfg.noProxy)) {
+    const entries = cfg.noProxy.filter(
+      (p): p is string => typeof p === "string" && p.trim() !== "",
+    );
+    if (entries.length > 0) out.noProxy = entries;
+  }
+  if (typeof cfg.bypassDeepSeekDirect === "boolean") {
+    out.bypassDeepSeekDirect = cfg.bypassDeepSeekDirect;
+  }
+  return out;
+}
+
 export function loadRateLimit(path: string = defaultConfigPath()): RateLimitConfig | undefined {
   const rpm = readConfig(path).rateLimit?.rpm;
   if (typeof rpm !== "number" || !Number.isInteger(rpm) || rpm <= 0) return undefined;
   return { rpm };
+}
+
+export function loadMouseWheelRows(path: string = defaultConfigPath()): number | undefined {
+  const raw = readConfig(path).mouseWheelRows;
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1) return undefined;
+  return Math.min(raw, 10);
+}
+
+export function loadToolRateLimit(
+  path: string = defaultConfigPath(),
+): false | NormalizedToolRateLimitConfig {
+  return normalizeToolRateLimitConfig(readConfig(path).toolRateLimit);
 }
 
 export function saveBaseUrl(url: string, path: string = defaultConfigPath()): void {
@@ -638,13 +763,22 @@ export function searchEnabled(path: string = defaultConfigPath()): boolean {
   return true;
 }
 
+export function loadJavaSourceEnabled(path: string = defaultConfigPath()): boolean {
+  const env = process.env.REASONIX_JAVA_SOURCE;
+  if (env === "1" || env === "true") return true;
+  const cfg = readConfig(path).javaSource;
+  return cfg === true;
+}
+
 export function webSearchEngine(
   path: string = defaultConfigPath(),
-): "mojeek" | "searxng" | "metaso" | "tavily" {
+): "mojeek" | "searxng" | "metaso" | "tavily" | "perplexity" | "exa" {
   const cfg = readConfig(path).webSearchEngine;
   if (cfg === "searxng") return "searxng";
   if (cfg === "metaso") return "metaso";
   if (cfg === "tavily") return "tavily";
+  if (cfg === "perplexity") return "perplexity";
+  if (cfg === "exa") return "exa";
   return "mojeek";
 }
 
@@ -735,6 +869,22 @@ export function clearProjectShellAllowed(
   cfg.projects[key].shellAllowed = [];
   writeConfig(cfg, path);
   return existing.length;
+}
+
+export function projectHooksTrusted(rootDir: string, path: string = defaultConfigPath()): boolean {
+  const cfg = readConfig(path);
+  const key = findProjectKey(cfg, rootDir);
+  return key !== undefined && cfg.projects?.[key]?.hooksTrusted === true;
+}
+
+export function trustProjectHooks(rootDir: string, path: string = defaultConfigPath()): void {
+  const cfg = readConfig(path);
+  if (!cfg.projects) cfg.projects = {};
+  const key = findProjectKey(cfg, rootDir) ?? rootDir;
+  if (!cfg.projects[key]) cfg.projects[key] = {};
+  if (cfg.projects[key].hooksTrusted === true) return;
+  cfg.projects[key].hooksTrusted = true;
+  writeConfig(cfg, path);
 }
 
 export function loadProjectPathAllowed(

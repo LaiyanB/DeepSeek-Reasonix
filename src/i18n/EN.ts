@@ -46,6 +46,16 @@ export const EN: TranslationSchema = {
   sessions: {
     emptyHint:
       "no saved sessions yet — run `reasonix chat` (sessions are auto-saved unless --no-session).",
+    listHeader: "Saved sessions (~/.reasonix/sessions/):",
+    inspectHint: "Inspect:  reasonix sessions <name>",
+    resumeHint: "Resume:   reasonix chat --session <name>",
+    noSession: 'no session named "{name}" (or it\u2019s empty).',
+    lookedAt: "looked at: {path}",
+    noIdleSessions: "no sessions idle \u2265{days} days. Nothing pruned.",
+    wouldPrune: "would prune {count} session(s) idle \u2265{days} days:",
+    dryRunHint: "re-run without --dry-run to actually delete.",
+    prunedCount: "pruned {count} session(s) idle \u2265{days} days:",
+    daysInvalid: "--days must be a positive integer (got {days}).",
   },
   ui: {
     welcome: "Run `reasonix` any time to start chatting — your settings are remembered.",
@@ -158,10 +168,6 @@ export const EN: TranslationSchema = {
           rows: [
             { key: "select text", text: "drag to select — terminal-native (no modifier needed)" },
             {
-              key: "/copy",
-              text: "vim/tmux-style copy mode — works in SSH/mosh/tmux where drag-select can't extend past the viewport",
-            },
-            {
               key: "copy",
               text: "Ctrl+Shift+C (Win/Linux) · Cmd+C (macOS) — or auto-copy-on-select if your terminal does it",
             },
@@ -187,6 +193,8 @@ export const EN: TranslationSchema = {
     tipShownOnce: "shown once",
     modelOverride: "override the default model",
     noSession: "disable session persistence for this run",
+    noMouseHint: "disable SGR mouse tracking; restores native drag-select and right-click",
+    noProxyHint: "ignore HTTPS_PROXY / HTTP_PROXY for this run; go direct",
     resumeHint: "force-resume the named session (even if idle)",
     newHint: "force a fresh session (ignore --session / --continue)",
     transcriptHint: "path to write the JSONL transcript",
@@ -253,9 +261,6 @@ export const EN: TranslationSchema = {
   },
   slash: {
     help: { description: "show the full command reference" },
-    copy: {
-      description: "open vim/tmux-style copy mode — j/k navigate, v select, y yank to clipboard",
-    },
     status: { description: "current model, flags, context, session" },
     preset: {
       description: "model bundle — auto escalates flash → pro, flash/pro lock",
@@ -337,6 +342,7 @@ export const EN: TranslationSchema = {
     },
     stop: { description: "abort the current model turn (typed alternative to Esc)" },
     feedback: { description: "open a GitHub issue with diagnostic info copied to clipboard" },
+    about: { description: "project info — version, website, repo, license" },
     keys: { description: "keyboard + mouse + copy/paste reference" },
     plans: { description: "list this session's active + archived plans, newest first" },
     replay: {
@@ -421,8 +427,8 @@ export const EN: TranslationSchema = {
     },
     "search-engine": {
       description:
-        "switch web search backend — mojeek (default, no deps), searxng (self-hosted), or metaso (free quota 100/d)",
-      argsHint: "<mojeek|searxng|metaso> [<endpoint>]",
+        "switch web search backend — mojeek (default, no deps), searxng (self-hosted), metaso (free 100/d), tavily (free 1000/mo), perplexity (AI-native), or exa (AI-native)",
+      argsHint: "<mojeek|searxng|metaso|tavily|perplexity|exa> [<key>]",
     },
   },
   wizard: {
@@ -594,6 +600,8 @@ export const EN: TranslationSchema = {
     verboseOn: "▸ verbose mode on — full reasoning + tool output",
     verboseOff: "▸ verbose mode off — head/tail elision restored",
     commandFailed: "! command failed",
+    steerInjected: "▸ steering queued — will be added after the current step",
+    steerCommandRejected: "▸ commands are disabled while steering a busy turn",
     btwUsage: "▸ /btw <question> — ask a side question without polluting the conversation context.",
     btwHeader: "≫ btw",
     btwFailed: "/btw failed",
@@ -624,6 +632,28 @@ export const EN: TranslationSchema = {
     planStoppedAt: "▸ plan stopped at {label}{counter}",
     revisingAfter: "▸ revising after {label} — {feedback}",
     historyScrollHint: " ↑ reading history · End / PgDn returns to bottom · ↓ advances one line",
+    editHistoryTitle: "Edit history (oldest first):",
+    editHistoryNoCodeMode: "not in code mode",
+    editHistoryNoEdits: "no edits recorded this session yet",
+    editHistoryNoShowId:
+      "usage: /show [id] [path]   (omit id for newest; path from the per-file summary)",
+    editHistoryIdNotFound: "no edit #{id} — run /history to see valid ids",
+    editHistoryLookupFailed: "unexpected: history lookup failed",
+    editHistoryBatchNoFile: 'batch #{id} doesn\'t include "{path}" — files in this batch: {files}',
+    editHistoryNoEdits2: "no edits recorded this session — /history is empty",
+    editHistoryStatusApplied: "applied",
+    editHistoryStatusPartial: "PARTIAL",
+    editHistoryStatusUndone: "UNDONE",
+    editHistoryHelpShow:
+      "/show <id>            \u2192 per-file summary    \u00b7    /show <id> <path>  \u2192 full diff of one file",
+    editHistoryHelpUndo:
+      "/undo                 \u2192 newest non-undone   \u00b7    /undo <id> [path]  \u2192 target a specific batch or file",
+    editHistoryAlreadyReverted: "(already reverted \u2014 /history shows the batch-level status)",
+    editHistoryRevertFile: "/undo {id} {path}  \u2192 revert just this file",
+    mcpFailed: "MCP {name} failed",
+    mcpWarn: "MCP {name} warn",
+    unknownTheme: "unknown theme: {name}\navailable: {choices}",
+    themeSaved: "theme saved: {name}\nactive on next launch: {active}",
   },
   hooks: {
     head: "hook {tag} `{cmd}` {decision}{truncTag}",
@@ -651,11 +681,11 @@ export const EN: TranslationSchema = {
     toolUploadStatus: "tool result uploaded · model thinking before next response…",
     preflightTruncateStatus: "preflight: context near full, truncating oldest history…",
     preflightTruncated:
-      "preflight: request ~{estimate}/{ctxMax} tokens ({pct}%) — truncated {beforeMessages} messages → {afterMessages}. Sending.",
+      "preflight: request ~{estimate}/{ctxMax} tokens ({pct}%) · body {bodyKB} KB — truncated {beforeMessages} messages → {afterMessages}. Sending.",
     preflightTruncatedStillFull:
-      "preflight: request still ~{estimate}/{ctxMax} tokens ({pct}%) after truncating {beforeMessages} messages → {afterMessages}. DeepSeek will likely 400. Run /clear or /new to start fresh.",
+      "preflight: request still ~{estimate}/{ctxMax} tokens ({pct}%) · body {bodyKB} KB after truncating {beforeMessages} messages → {afterMessages}. DeepSeek will likely 400. Run /clear or /new to start fresh.",
     preflightNoFold:
-      "preflight: request ~{estimate}/{ctxMax} tokens ({pct}%) and nothing left to truncate — DeepSeek will likely 400. Run /clear or /new to start fresh.",
+      "preflight: request ~{estimate}/{ctxMax} tokens ({pct}%) · body {bodyKB} KB and nothing left to truncate — DeepSeek will likely 400. Run /clear or /new to start fresh.",
     flashEscalation: "⇧ flash requested escalation — retrying this turn on {model}{reasonSuffix}",
     harvestStatus: "extracting plan state from reasoning…",
     repeatToolCallWarning:
@@ -682,6 +712,8 @@ export const EN: TranslationSchema = {
       "Out of balance (DeepSeek 402): {inner}. Top up at https://platform.deepseek.com/top_up — the panel header shows your balance once it's non-zero.",
     badparam422: "Invalid parameter (DeepSeek 422): {inner}",
     badrequest400: "Bad request (DeepSeek 400): {inner}",
+    concurrency429:
+      "DeepSeek concurrency limit hit (429): {inner}. The account has too many in-flight requests (cap: 500 for v4-pro, 2500 for v4-flash, summed across API keys account-wide). Usually means another Reasonix process is sharing the same key, or a parallel subagent fan-out overshot. Wait a few seconds and retry, reduce parallelism, or request a higher cap at https://platform.deepseek.com.",
     deepseek5xxHead:
       "DeepSeek service unavailable ({status}) — this is a DeepSeek-side problem, not Reasonix. Already retried 4× with backoff.",
     deepseek5xxReachable:
@@ -768,6 +800,10 @@ export const EN: TranslationSchema = {
       loopStarted:
         '▸ loop started — re-submitting "{prompt}" every {duration}. Type anything (or /loop stop) to cancel.',
       keysNeedsTui: "/keys needs a TUI context (postKeys wired).",
+      aboutHeader: "Reasonix v{version} — a cache-first DeepSeek coding agent",
+      aboutWebsiteLabel: "Website",
+      aboutRepoLabel: "GitHub ",
+      aboutLicenseLabel: "License",
       unknownCommand: "unknown command: /{cmd} — did you mean {list}?",
       unknownCommandShort: "unknown command: /{cmd}  (try /help)",
     },
@@ -1025,6 +1061,13 @@ export const EN: TranslationSchema = {
       statusMcp: "  mcp     {servers} server(s), {tools} tool(s) in registry",
       statusEdits: "  edits   {count} pending (/apply to commit, /discard to drop)",
       statusPlan: "  plan    ON — writes gated (submit_plan + approval)",
+      statusLifecycle: "  lifecycle {mode}/{state} · {progress}{evidence}",
+      lifecycleNoPlan: "no plan",
+      lifecycleEvidencePending: "evidence pending",
+      lifecycleRejected: "lifecycle: {tool} blocked in {state} — next: {next}",
+      lifecycleEvidenceRejected: "lifecycle: step {stepId} needs evidence — next: {next}",
+      lifecycleRepeatedRejected:
+        "lifecycle: repeated {tool} rejection — do not retry identical args",
       statusModeYolo:
         "  mode    YOLO — edits + shell auto-run with no prompt (/undo still rolls back · Shift+Tab to flip)",
       statusModeAuto:
@@ -1040,6 +1083,10 @@ export const EN: TranslationSchema = {
       noArchives:
         "no archived plans yet for this session — they auto-archive when every step is done",
       archivedHeader: "Archived ({count}):",
+      evidencePending:
+        "  ! evidence pending — current step needs verification/diff/checkpoint/manual evidence",
+      evidenceLine: "  evidence {stepId}: {summary}",
+      archivedEvidenceLine: "    evidence: {summary}",
       replayNoSession:
         "no session attached — `/replay` is per-session. Run `reasonix code` in a project to get a session.",
       replayNoArchives:
@@ -1160,6 +1207,10 @@ export const EN: TranslationSchema = {
         "  /search-engine metaso              use Metaso API (100/d free, configure your own API key for more)",
       usageTavily:
         "  /search-engine tavily              use Tavily API (LLM-friendly, free 1000/mo — set TAVILY_API_KEY or tavilyApiKey in config; get one at https://tavily.com)",
+      usagePerplexity:
+        "  /search-engine perplexity          use Perplexity AI (AI-native answer + citations — set PERPLEXITY_API_KEY or perplexityApiKey in config; get one at https://perplexity.ai/settings/api)",
+      usageExa:
+        "  /search-engine exa                 use Exa API (AI-native answer + citations, free 1000/mo — set EXA_API_KEY or exaApiKey in config; sign up at https://exa.ai)",
       alias: "Alias: /se",
       searxngInfo:
         "SearXNG is a self-hosted metasearch engine (https://github.com/searxng/searxng).",
@@ -1170,8 +1221,14 @@ export const EN: TranslationSchema = {
         " There is a daily quota of 100 (configure your own API key for higher limits).",
       switchedTavilyNote:
         " Set TAVILY_API_KEY or `tavilyApiKey` in config; free 1000/mo at https://tavily.com.",
+      switchedPerplexityNote:
+        " Set PERPLEXITY_API_KEY or `perplexityApiKey` in config; get one at https://perplexity.ai/settings/api.",
+      switchedExaNote: " Set EXA_API_KEY or `exaApiKey` in config; sign up at https://exa.ai.",
+      keyNeeded:
+        'No API key configured for "{engine}".\n\n  1. Set the {envVar} environment variable\n  2. Or provide one inline:  /search-engine {engine} <your-key>\n  3. Or add "{engine}ApiKey" to ~/.reasonix/config.json\n\nThen retry /search-engine {engine}.',
+      keySaved: " API key saved to config.",
       confirmed:
-        '✓ Web search engine set to "{engine}"{detail}. Next assistant turn will pick up the change.',
+        'Web search engine set to "{engine}"{detail}. Next assistant turn will pick up the change.',
       confirmedDetail: " ({endpoint})",
     },
     skill: {
@@ -1225,6 +1282,7 @@ export const EN: TranslationSchema = {
     editsLabel: "edits:",
     mcpLoading: "MCP",
     ctx: "ctx",
+    shortcutsHint: "Ctrl+P shortcuts",
   },
   editMode: {
     plan: "PLAN MODE",
@@ -1257,6 +1315,8 @@ export const EN: TranslationSchema = {
       "no $EDITOR / $VISUAL / $GIT_EDITOR set \u2014 export one (e.g. `export EDITOR=nano`) and retry",
     editorExited: "editor exited with code {code}",
     typeaheadStaged: "\u25b8 {count} line(s) staged \u00b7 esc recall",
+    steerPlaceholder: "type to steer the current task — commands are disabled while busy",
+    steerHint: "send — injected mid-turn",
   },
   pathConfirm: {
     title: "Outside-sandbox path",
@@ -1450,33 +1510,35 @@ export const EN: TranslationSchema = {
   },
   webErrors: {
     status:
-      "web_search {status} \u2014 try: the search backend returned an error; rephrase the query, or switch engine with /search-engine mojeek|searxng",
+      "web_search {status} \u2014 try: the search backend returned an error; rephrase the query, or switch engine with /search-engine mojeek|searxng|metaso|tavily|perplexity|exa",
     rateLimit429:
       "web_search 429 \u2014 try: wait 10s before retrying, or rephrase the query; the search backend is rate-limiting this client",
     forbidden403:
-      "web_search 403 \u2014 try: the search backend is blocking this client; switch engine with /search-engine mojeek|searxng, or wait and retry later",
+      "web_search 403 \u2014 try: the search backend is blocking this client; switch engine with /search-engine mojeek|searxng|metaso|tavily|perplexity|exa, or wait and retry later",
     serverError5xx:
       "web_search {status} \u2014 try: open the search URL in a browser; if it loads this is transient and a retry in 30s may help",
     mojeekBlocked:
-      "web_search: Mojeek anti-bot page \u2014 rate-limited or blocked \u2014 try: wait 30s and retry, or switch engine with /search-engine searxng",
+      "web_search: Mojeek anti-bot page \u2014 rate-limited or blocked \u2014 try: wait 30s and retry, or switch engine with /search-engine mojeek|searxng|metaso|tavily|perplexity|exa",
     mojeekNoResults:
-      "web_search: 0 results but response doesn't look like a real empty page ({chars} chars, first 120: {preview}) \u2014 try: rephrase the query with simpler terms, or switch engine with /search-engine searxng",
+      "web_search: 0 results but response doesn't look like a real empty page ({chars} chars, first 120: {preview}) \u2014 try: rephrase the query with simpler terms, or switch engine with /search-engine mojeek|searxng|metaso|tavily|perplexity|exa",
     invalidEndpoint:
       'web_search: invalid SearXNG endpoint "{endpoint}" \u2014 try: set a valid URL with /search-endpoint http://host:port',
     endpointMustBeHttp:
       "web_search: SearXNG endpoint must be http(s), got {protocol} \u2014 try: set a valid URL with /search-endpoint http://host:port",
     cannotReach:
-      "web_search: Cannot reach SearXNG server at {endpoint} \u2014 try: install and start SearXNG (https://github.com/searxng/searxng, e.g. `docker run -d -p 8080:8080 searxng/searxng`), or switch to the default engine with /search-engine mojeek",
+      "web_search: Cannot reach SearXNG server at {endpoint} \u2014 try: install and start SearXNG (https://github.com/searxng/searxng, e.g. `docker run -d -p 8080:8080 searxng/searxng`), or switch to another engine with /search-engine mojeek|searxng|metaso|tavily|perplexity|exa",
     searxngNoResults:
-      "web_search: 0 results but SearXNG response doesn't look like an empty results page ({chars} chars) \u2014 try: rephrase the query with simpler terms, or switch engine with /search-engine mojeek",
+      "web_search: 0 results but SearXNG response doesn't look like an empty results page ({chars} chars) \u2014 try: rephrase the query with simpler terms, or switch engine with /search-engine mojeek|searxng|metaso|tavily|perplexity|exa",
+    metasoMissingKey:
+      "web_search: Metaso requires an API key \u2014 set METASO_API_KEY or configure one with /search-engine metaso <key>. Get one at https://metaso.cn/search-api/playground",
     metasoDailyLimit:
-      "web_search: daily search limit reached for the default API key \u2014 set your own METASO_API_KEY env var or get one at https://metaso.cn/search-api/playground",
+      "web_search: Metaso daily search limit reached \u2014 set METASO_API_KEY or get a key at https://metaso.cn/search-api/playground",
     metasoUnauthorized:
       "web_search: Metaso API key rejected \u2014 check METASO_API_KEY or get one at https://metaso.cn/search-api/playground",
     metasoRateLimit:
       "web_search: Metaso rate-limited \u2014 wait and retry, or get your own API key at https://metaso.cn/search-api/playground",
     metasoServerError:
-      "web_search: Metaso server error ({status}) \u2014 try again later, or switch engine with /search-engine mojeek",
+      "web_search: Metaso server error ({status}) \u2014 try again later, or switch engine with /search-engine mojeek|searxng|metaso|tavily|perplexity|exa",
     metasoParseError:
       "web_search: Metaso returned unparseable response (HTTP {status}) \u2014 try again later",
     metasoApiError: "web_search: Metaso API error (code {code}: {message}) \u2014 try again later",
@@ -1485,11 +1547,31 @@ export const EN: TranslationSchema = {
     tavilyUnauthorized:
       "web_search: Tavily API key rejected \u2014 check TAVILY_API_KEY or get one at https://tavily.com",
     tavilyRateLimit:
-      "web_search: Tavily rate-limited or monthly quota exceeded \u2014 wait, switch engine with /search-engine mojeek, or upgrade your Tavily plan",
+      "web_search: Tavily rate-limited or monthly quota exceeded \u2014 wait, switch engine with /search-engine mojeek|searxng|metaso|tavily|perplexity|exa, or upgrade your Tavily plan",
     tavilyServerError:
-      "web_search: Tavily server error ({status}) \u2014 try again later, or switch engine with /search-engine mojeek",
+      "web_search: Tavily server error ({status}) \u2014 try again later, or switch engine with /search-engine mojeek|searxng|metaso|tavily|perplexity|exa",
     tavilyParseError:
       "web_search: Tavily returned unparseable response (HTTP {status}) \u2014 try again later",
+    perplexityMissingKey:
+      "web_search: Perplexity backend requires an API key \u2014 set PERPLEXITY_API_KEY env var or `perplexityApiKey` in ~/.reasonix/config.json; get one at https://perplexity.ai/settings/api",
+    perplexityUnauthorized:
+      "web_search: Perplexity API key rejected \u2014 check PERPLEXITY_API_KEY or get one at https://perplexity.ai/settings/api",
+    perplexityRateLimit:
+      "web_search: Perplexity rate-limited \u2014 wait and retry, or switch engine with /search-engine mojeek|searxng|metaso|tavily|perplexity|exa",
+    perplexityServerError:
+      "web_search: Perplexity server error ({status}) \u2014 try again later, or switch engine with /search-engine mojeek|searxng|metaso|tavily|perplexity|exa",
+    perplexityParseError:
+      "web_search: Perplexity returned unparseable response (HTTP {status}) \u2014 try again later",
+    exaMissingKey:
+      "web_search: Exa backend requires an API key \u2014 set EXA_API_KEY env var or `exaApiKey` in ~/.reasonix/config.json; free 1000/mo signup at https://exa.ai",
+    exaUnauthorized:
+      "web_search: Exa API key rejected \u2014 check EXA_API_KEY or get one at https://exa.ai",
+    exaRateLimit:
+      "web_search: Exa API rate-limited or monthly quota exceeded \u2014 wait or upgrade at https://exa.ai/pricing",
+    exaServerError:
+      "web_search: Exa server error ({status}) \u2014 try again later, or switch engine with /search-engine mojeek|searxng|metaso|tavily|perplexity|exa",
+    exaParseError:
+      "web_search: Exa returned unparseable response (HTTP {status}) \u2014 try again later",
     fetchStatus:
       "web_fetch {status} for {url} \u2014 try: confirm the URL resolves in a browser; status suggests the host returned an error page",
     fetchRateLimit429:
@@ -1589,19 +1671,6 @@ export const EN: TranslationSchema = {
     categoryProject: "project",
     categoryReference: "reference",
   },
-  copyMode: {
-    title: "── COPY MODE ──",
-    help: "j/k or ↑/↓ move · v select · y yank · g/G top/bottom · q quit",
-    statusBar: "line {cur}/{total} · selection: {sel}",
-    statusYanked: "yanked {size} chars (osc52={osc52})",
-    statusEmpty: "nothing selected",
-    empty: "(no chat content yet — say something to the model first)",
-    labelUser: "you",
-    labelAssistant: "assistant",
-    labelReasoning: "reasoning",
-    yankedToast: "▸ copied {size} chars to clipboard (osc52)",
-    yankedToastFile: "▸ copied {size} chars · file: {path}",
-  },
   mcpHealth: {
     noData: "no inspect data",
     healthy: "healthy \u00b7 {ms}ms",
@@ -1670,6 +1739,21 @@ export const EN: TranslationSchema = {
     serverCount: "{count} server{s}",
     footer: "\u2191\u2193 pick \u00b7 [r] reconnect \u00b7 [d] disable \u00b7 esc quit",
   },
+  mcpBrowse: {
+    noResources:
+      "No resources on any connected MCP server (or no servers connected). `/mcp` shows the current set.",
+    readOne: "Read one: `/resource <uri>` \u2014 or use Tab in the picker.",
+    noPrompts:
+      "No prompts on any connected MCP server (or no servers connected). `/mcp` shows the current set.",
+    fetchOne:
+      "Fetch one: `/prompt <name>` \u2014 args are not supported yet; prompts with required args will surface an error from the server.",
+    noServerForResource: 'no server exposes resource "{name}"',
+    resourceHint: "`/resource` with no arg lists what's available.",
+    readFailed: "readResource failed",
+    noServerForPrompt: 'no server exposes prompt "{name}"',
+    promptHint: "`/prompt` with no arg lists what's available.",
+    fetchFailed: "getPrompt failed",
+  },
   mcpLifecycle: {
     handshake: "handshake\u2026",
     connected: "connected",
@@ -1685,6 +1769,8 @@ export const EN: TranslationSchema = {
       "→ run `reasonix setup` to remove broken entries from your saved config.",
     abortedHint:
       "MCP startup aborted — {count} server(s) skipped. Run /mcp to retry once you've fixed the underlying issue.",
+    toolsReady: "tools ready",
+    warnLabel: "warn",
   },
   checkpointPicker: {
     title: "restore a checkpoint \u2014 {workspace}",
@@ -1730,5 +1816,70 @@ export const EN: TranslationSchema = {
     noRecords: "no records",
     untracked: "(untracked)",
     churned: "(churned \u00d7{count})",
+  },
+  builtinSkills: {
+    explore:
+      "Explore the codebase in an isolated subagent \u2014 wide-net read-only investigation that returns one distilled answer. Best for: 'find all places that\u2026', 'how does X work across the project', 'survey the code for Y'.",
+    research:
+      "Research a question by combining web search + code reading in an isolated subagent. Best for: 'is X feature supported by lib Y', 'what\u2019s the canonical way to do Z', 'compare our impl against the spec'.",
+    review:
+      "Review the pending changes (current branch diff by default) in an isolated subagent \u2014 flags correctness, security, missing tests, hidden behavior changes; reports verdict + per-issue file:line. Read-only; the parent decides what to act on.",
+    securityReview:
+      "Security-focused review of the current branch diff in an isolated subagent \u2014 flags injection/authz/secrets/deserialization/path-traversal/crypto issues, severity-tagged. Read-only. Use when shipping changes that touch auth, input parsing, file IO, or external requests.",
+    test: "Run the project\u2019s test suite, diagnose failures, propose SEARCH/REPLACE fixes, re-run until green (or stop after 2 fix attempts on the same failure). Inlined \u2014 runs in the parent loop so you see the edit blocks and can /apply them. Detects npm/pnpm/yarn/pytest/go/cargo.",
+  },
+  shortcutsHelp: {
+    title: "Shortcuts",
+    groupInput: "Input",
+    groupNavigation: "Navigation",
+    groupSession: "Session",
+    groupSystem: "System",
+    descEnter: "Send message",
+    descShiftEnter: "New line",
+    descCtrlEnter: "New line",
+    descCtrlJ: "New line",
+    descCtrlU: "Clear input",
+    descCtrlW: "Delete word",
+    descCtrlP: "Show/hide shortcuts",
+    descCtrlX: "Open in editor",
+    descArrows: "Input history",
+    descPgUpDown: "Scroll page",
+    descCtrlL: "Clear screen",
+    descCtrlB: "Toggle sidebar",
+    descNewSession: "New session",
+    descListSessions: "List sessions",
+    descSwitchModel: "Switch model",
+    descSwitchPreset: "Switch preset",
+    descSwitchTheme: "Switch theme",
+    descCtrlC: "Quit",
+    descEsc: "Stop / Cancel",
+    descCtrlR: "Toggle verbose",
+    descCtrlO: "Expand reply (streaming only)",
+    descHelp: "Show all commands",
+    descShiftTab: "Switch edit mode",
+  },
+  mcpCli: {
+    bundledCatalog: "Bundled MCP servers (offline catalog):",
+    justFetched: "just fetched",
+    cachedAge: "cached, {age}",
+    moreAvailable: "more available",
+    allLoaded: "all loaded",
+    morePagesAvailable:
+      "\u25b8 more pages available \u2014 `reasonix mcp list --pages <n>` or --all",
+    installHint: "Install:  reasonix mcp install <name>",
+    usageSearch: "usage: reasonix mcp search <query>",
+    usageInstall: "usage: reasonix mcp install <name>",
+    noMatchesFor: 'No matches for "{q}" across {count} loaded entries ({source})',
+    matchCount: '{count} match(es) for "{q}" in {source} registry ({loaded} entries scanned):',
+    moreLoaded: "\u2026 {count} more loaded \u2014 use `reasonix mcp search <query>` to filter",
+    moreMatches: "\u2026 {count} more matches",
+    installed: "Installed: {spec}",
+    noServerFound:
+      'No MCP server named "{target}" found after walking {pages} page(s) of the {source} registry.',
+    noServerTryMore: "Try: reasonix mcp install {target} --max-pages 100",
+    noInstallMeta:
+      'Could not derive install metadata for "{name}" \u2014 try `npx -y @smithery/cli install {name}` directly.',
+    buildSpecFailed: "Cannot build install spec for {name}: {message}",
+    alreadyInstalled: "Already installed: {spec}",
   },
 };

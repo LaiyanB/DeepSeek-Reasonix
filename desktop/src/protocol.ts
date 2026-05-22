@@ -9,6 +9,7 @@ export type PathAccessRequiredEvent = {
   toolName: string;
   sandboxRoot: string;
   allowPrefix: string;
+  prompt?: import("@reasonix/core-utils").ApprovalPrompt;
 };
 
 export type ConfirmRequiredEvent = {
@@ -16,6 +17,7 @@ export type ConfirmRequiredEvent = {
   id: number;
   kind: "run_command" | "run_background";
   command: string;
+  prompt?: import("@reasonix/core-utils").ApprovalPrompt;
 };
 
 export type ConfirmationChoice =
@@ -167,6 +169,8 @@ export type SkillsEvent = {
 export type CtxBreakdownEvent = {
   type: "$ctx_breakdown";
   reservedTokens: number;
+  /** Current log token count (real-time) — sent after /compact to refresh the meter. */
+  logTokens?: number;
 };
 
 export type MemoryEntryInfo = {
@@ -271,10 +275,8 @@ export type QQSettingsEvent = {
   sandbox: boolean;
   enabled: boolean;
   configured: boolean;
-  /** Always false — desktop never holds a live QQ connection (#1317). Read enabledForCli instead. */
-  connected: boolean;
-  /** Credentials saved + enable toggle on. The next `reasonix` CLI run will start the channel. */
-  enabledForCli?: boolean;
+  runtimeState: "disconnected" | "connecting" | "connected" | "failed";
+  lastError?: string;
   appIdPreview?: string;
   access: string;
 };
@@ -446,6 +448,7 @@ export type OutgoingCommand = { tabId?: string } & (
   | { cmd: "session_list" }
   | { cmd: "session_delete"; name: string }
   | { cmd: "session_load"; name: string }
+  | { cmd: "session_rename"; name: string; title: string }
   | { cmd: "new_chat" }
   | { cmd: "setup_save_key"; key: string }
   | { cmd: "settings_get" }

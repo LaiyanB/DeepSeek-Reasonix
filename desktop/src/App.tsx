@@ -2,6 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import {
+  isPermissionGranted as isNotificationPermissionGranted,
+  requestPermission as requestNotificationPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { type Update, check } from "@tauri-apps/plugin-updater";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
@@ -51,6 +56,7 @@ import { Sidebar } from "./ui/sidebar";
 import { Shortcut, localizeShortcutText, shortcutText } from "./ui/shortcut";
 import { Splash, shouldShowSplash } from "./ui/splash";
 import { StatusBar } from "./ui/statusbar";
+import { dispatchDesktopNotifications, deriveDesktopNotifications, type ApprovalSnapshot } from "./notifications";
 import {
   ActivePlanTaskCard,
   AssistantMsg,
@@ -97,12 +103,13 @@ export type ChatMessage =
       pending: boolean;
     }
   | { kind: "status"; text: string }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string; id: string; recoverable?: boolean };
 
 export type PendingConfirm = {
   id: number;
   kind: "run_command" | "run_background";
   command: string;
+  prompt: import("@reasonix/core-utils").ApprovalPrompt;
 };
 
 export type PendingPathAccess = {
@@ -112,6 +119,7 @@ export type PendingPathAccess = {
   toolName: string;
   sandboxRoot: string;
   allowPrefix: string;
+  prompt: import("@reasonix/core-utils").ApprovalPrompt;
 };
 
 export type PendingChoice = {
@@ -270,11 +278,13 @@ type Action =
   | { t: "resolve_checkpoint"; id: number; verdict: CheckpointVerdict }
   | { t: "resolve_revision"; id: number; verdict: RevisionVerdict }
   | { t: "dismiss_plan" }
+  | { t: "dismiss_error"; id: string }
   | { t: "mention_results"; results: MentionResults }
   | { t: "mention_preview"; preview: MentionPreviewState }
   | { t: "enqueue_send"; text: string }
   | { t: "dequeue_send"; index: number }
-  | { t: "shift_queued_send" };
+  | { t: "shift_queued_send" }
+  | { t: "push_status"; text: string };
 
 function fallbackSkillDesc(skill: SkillInfo): string {
   const scope =
@@ -290,27 +300,33 @@ function fallbackSkillDesc(skill: SkillInfo): string {
   return t("app.skill.generic", { scope, runAs });
 }
 
-function reduce(state: State, action: Action): State {
+function nextMessageTurn(messages: ChatMessage[]): number {
+  const lastTurn = messages.reduce((max, m) => {
+    if (m.kind === "user" || m.kind === "assistant") return Math.max(max, m.turn);
+    return max;
+  }, 0);
+  return lastTurn + 1;
+}
+
+let _errSeq = 0;
+function nextErrorId(): string {
+  _errSeq += 1;
+  return `err-${Date.now().toString(36)}-${_errSeq}`;
+}
+
+export function reduce(state: State, action: Action): State {
   switch (action.t) {
     case "send_user": {
-      const lastTurn = state.messages.reduce((max, m) => {
-        if (m.kind === "user" || m.kind === "assistant") return Math.max(max, m.turn);
-        return max;
-      }, 0);
       return {
         ...state,
         busy: true,
         messages: [
           ...state.messages,
-          { kind: "user", text: action.text, clientId: action.clientId, turn: lastTurn + 1 },
+          { kind: "user", text: action.text, clientId: action.clientId, turn: nextMessageTurn(state.messages) },
         ],
       };
     }
     case "start_skill": {
-      const lastTurn = state.messages.reduce((max, m) => {
-        if (m.kind === "user" || m.kind === "assistant") return Math.max(max, m.turn);
-        return max;
-      }, 0);
       const argsLine = action.args ? ` ${action.args}` : "";
       return {
         ...state,
@@ -322,7 +338,7 @@ function reduce(state: State, action: Action): State {
             kind: "user",
             text: `/${action.skill.name}${argsLine}`,
             clientId: action.clientId,
-            turn: lastTurn + 1,
+            turn: nextMessageTurn(state.messages),
             skill: action.skill,
           },
         ],
@@ -337,7 +353,11 @@ function reduce(state: State, action: Action): State {
         queuedSends: [],
         messages: [
           ...state.messages,
-          { kind: "error", message: `reasonix exited (code ${action.code ?? "?"})` },
+          {
+            kind: "error",
+            message: `reasonix exited (code ${action.code ?? "?"})`,
+            id: nextErrorId(),
+          },
         ],
       };
     case "incoming":
@@ -447,6 +467,13 @@ function reduce(state: State, action: Action): State {
     }
     case "dismiss_plan":
       return { ...state, activePlan: null };
+    case "dismiss_error":
+      return {
+        ...state,
+        messages: state.messages.filter(
+          (m) => !(m.kind === "error" && m.id === action.id),
+        ),
+      };
     case "mention_results":
       return { ...state, mentionResults: action.results };
     case "mention_preview":
@@ -460,6 +487,8 @@ function reduce(state: State, action: Action): State {
       };
     case "shift_queued_send":
       return { ...state, queuedSends: state.queuedSends.slice(1) };
+    case "push_status":
+      return { ...state, messages: [...state.messages, { kind: "status", text: action.text }] };
   }
 }
 
@@ -540,20 +569,52 @@ function appendTextSegment(
   return [...segments, { kind, text }];
 }
 
-function applyIncoming(state: State, ev: IncomingEvent): State {
+export function applyIncoming(state: State, ev: IncomingEvent): State {
   switch (ev.type) {
+    case "user.message": {
+      return {
+        ...state,
+        busy: true,
+        messages: [
+          ...state.messages,
+          {
+            kind: "user",
+            text: ev.text,
+            clientId: `remote-${ev.id}`,
+            turn: ev.turn > 0 ? ev.turn : nextMessageTurn(state.messages),
+          },
+        ],
+      };
+    }
     case "$ready":
       return { ...state, ready: true, needsSetup: false };
     case "$needs_setup":
       return { ...state, needsSetup: true, ready: false };
     case "$turn_complete":
-      return { ...state, busy: false, activeSkill: null };
+      // Clear pause-gate-tied modals too. By the time the loop emits
+      // $turn_complete, anything still in these arrays is orphaned — the
+      // tool call that opened it has either resolved (so it's gone already)
+      // or the turn was aborted (so the model isn't coming back for it).
+      // Without this, an Esc/abort during plan approval leaves the plan
+      // card rendered AFTER state.messages forever; the queued user input
+      // that drains next then appears above the zombie card (#1456).
+      return {
+        ...state,
+        busy: false,
+        activeSkill: null,
+        pendingConfirms: [],
+        pendingPathAccess: [],
+        pendingChoices: [],
+        pendingPlans: [],
+        pendingCheckpoints: [],
+        pendingRevisions: [],
+      };
     case "$confirm_required":
       return {
         ...state,
         pendingConfirms: [
           ...state.pendingConfirms,
-          { id: ev.id, kind: ev.kind, command: ev.command },
+          { id: ev.id, kind: ev.kind, command: ev.command, prompt: ev.prompt! },
         ],
       };
     case "$path_access_required":
@@ -568,6 +629,7 @@ function applyIncoming(state: State, ev: IncomingEvent): State {
             toolName: ev.toolName,
             sandboxRoot: ev.sandboxRoot,
             allowPrefix: ev.allowPrefix,
+            prompt: ev.prompt!,
           },
         ],
       };
@@ -653,8 +715,16 @@ function applyIncoming(state: State, ev: IncomingEvent): State {
       };
     case "$skills":
       return { ...state, skills: ev.items };
-    case "$ctx_breakdown":
-      return { ...state, usage: { ...state.usage, reservedTokens: ev.reservedTokens } };
+    case "$ctx_breakdown": {
+      const next: UsageStats = { ...state.usage, reservedTokens: ev.reservedTokens };
+      if (typeof ev.logTokens === "number") {
+        // After /compact the backend sends a real-time log token count;
+        // reset the meter so it reflects the actual current context size.
+        next.cacheHitTokens = 0;
+        next.cacheMissTokens = ev.logTokens;
+      }
+      return { ...state, usage: next };
+    }
     case "$memory":
       return { ...state, memory: ev.entries };
     case "$jobs":
@@ -677,7 +747,8 @@ function applyIncoming(state: State, ev: IncomingEvent): State {
           sandbox: ev.sandbox,
           enabled: ev.enabled,
           configured: ev.configured,
-          connected: ev.connected,
+          runtimeState: ev.runtimeState,
+          lastError: ev.lastError,
           appIdPreview: ev.appIdPreview,
           access: ev.access,
         },
@@ -787,18 +858,30 @@ function applyIncoming(state: State, ev: IncomingEvent): State {
               `Session "${ev.name}" loaded with no messages (${sizeNote}). ` +
               `The file ~/.reasonix/sessions/${ev.name}.jsonl exists but couldn't be parsed — ` +
               `start a new chat or restore from .jsonl.bak if you have one.`,
+            id: nextErrorId(),
           },
         ],
       };
     }
     case "$error":
-    case "error":
+    case "error": {
+      // Kernel-level errors carry a `recoverable` flag — true for
+      // storm-repair / repeat-loop warnings the loop already worked
+      // around, false for hard failures. The desktop renders both as
+      // dismissable cards but uses softer tone for the recoverable
+      // ones so a session full of self-repaired loops doesn't look
+      // like everything's on fire (#1456-followup).
+      const recoverable = ev.type === "error" ? ev.recoverable : false;
       return {
         ...state,
         busy: false,
         activeSkill: null,
-        messages: [...state.messages, { kind: "error", message: ev.message }],
+        messages: [
+          ...state.messages,
+          { kind: "error", message: ev.message, id: nextErrorId(), recoverable },
+        ],
       };
+    }
     case "model.turn.started":
       if (state.messages.some((m) => m.kind === "assistant" && m.turn === ev.turn)) {
         return { ...state, model: ev.model };
@@ -928,6 +1011,7 @@ function applyIncoming(state: State, ev: IncomingEvent): State {
     case "$btw_result":
       return {
         ...state,
+        busy: false,
         messages: [
           ...state.messages,
           { kind: "status", text: `≫ btw\n${ev.answer}` },
@@ -1002,6 +1086,8 @@ interface TabRuntimeProps {
   onSetFontScale: (scale: FontScale) => void;
   fontFamily: FontFamily;
   onSetFontFamily: (family: FontFamily) => void;
+  customFontFamily: string;
+  onSetCustomFontFamily: (family: string) => void;
   sideCollapsed: boolean;
   ctxCollapsed: boolean;
   onToggleSide: () => void;
@@ -1034,6 +1120,8 @@ function TabRuntime({
   onSetFontScale,
   fontFamily,
   onSetFontFamily,
+  customFontFamily,
+  onSetCustomFontFamily,
   sideCollapsed,
   ctxCollapsed,
   onToggleSide,
@@ -1088,6 +1176,16 @@ function TabRuntime({
   const [settingsPage, setSettingsPage] = useState<SettingsPageId>("general");
   const [jobsOpen, setJobsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const previousApprovalSnapshotRef = useRef<ApprovalSnapshot>({
+    confirms: [],
+    pathAccess: [],
+    choices: [],
+    plans: [],
+    checkpoints: [],
+    revisions: [],
+  });
+  const wasBusyRef = useRef(false);
+  const busyStartedAtRef = useRef<number | null>(null);
   const openSettingsAt = useCallback((page: SettingsPageId = "general") => {
     setSettingsPage(page);
     setSettingsOpen(true);
@@ -1243,11 +1341,22 @@ function TabRuntime({
       const text = (override ?? draft).trim();
       if (!text || !state.ready || state.busy) return;
 
-      // /btw <question> — route to side-question RPC instead of user_input
+      // /btw <question> — route to side-question RPC instead of user_input.
+      // Empty payload used to silently swallow the keystroke (#1370); surface
+      // the usage hint as a status message so the user knows what's expected.
+      // The full /btw line is echoed via send_user so the typed text appears
+      // immediately and busy=true gives a thinking indicator while the side
+      // call runs (#1470).
       const btwMatch = /^\/btw(?:\s+([\s\S]+))?$/.exec(text);
       if (btwMatch) {
         const question = btwMatch[1]?.trim() ?? "";
-        if (!question) return;
+        if (!question) {
+          dispatch({ t: "push_status", text: t("app.btwUsage") });
+          if (!override) setDraft("/btw ");
+          return;
+        }
+        const clientId = `btw-${Date.now()}`;
+        dispatch({ t: "send_user", text, clientId });
         sendRpc({ cmd: "btw", text: question });
         if (!override) setDraft("");
         return;
@@ -1293,6 +1402,54 @@ function TabRuntime({
     dispatch({ t: "shift_queued_send" });
     send(next);
   }, [state.busy, state.ready, state.queuedSends, send]);
+
+  useEffect(() => {
+    const currentSnapshot: ApprovalSnapshot = {
+      confirms: state.pendingConfirms.map((c) => ({ id: c.id, command: c.command })),
+      pathAccess: state.pendingPathAccess.map((p) => ({ id: p.id, path: p.path, intent: p.intent })),
+      choices: state.pendingChoices.map((c) => ({ id: c.id, question: c.question })),
+      plans: state.pendingPlans.map((p) => ({ id: p.id, summary: p.summary, plan: p.plan })),
+      checkpoints: state.pendingCheckpoints.map((c) => ({ id: c.id, title: c.title, result: c.result })),
+      revisions: state.pendingRevisions.map((r) => ({ id: r.id, summary: r.summary, reason: r.reason })),
+    };
+    const previousSnapshot = previousApprovalSnapshotRef.current;
+    const wasBusy = wasBusyRef.current;
+    const busyDurationMs = wasBusy && !state.busy && busyStartedAtRef.current
+      ? Date.now() - busyStartedAtRef.current
+      : 0;
+
+    if (state.busy && busyStartedAtRef.current === null) {
+      busyStartedAtRef.current = Date.now();
+    } else if (!state.busy) {
+      busyStartedAtRef.current = null;
+    }
+
+    previousApprovalSnapshotRef.current = currentSnapshot;
+    wasBusyRef.current = state.busy;
+
+    const notifications = deriveDesktopNotifications({
+      previous: previousSnapshot,
+      current: currentSnapshot,
+      wasBusy,
+      isBusy: state.busy,
+      busyDurationMs,
+      focused: false,
+    });
+    void dispatchDesktopNotifications(notifications, {
+      isFocused: () => getCurrentWindow().isFocused(),
+      isPermissionGranted: isNotificationPermissionGranted,
+      requestPermission: requestNotificationPermission,
+      sendNotification,
+    });
+  }, [
+    state.busy,
+    state.pendingChoices,
+    state.pendingCheckpoints,
+    state.pendingConfirms,
+    state.pendingPathAccess,
+    state.pendingPlans,
+    state.pendingRevisions,
+  ]);
 
   const resolveConfirm = useCallback(
     (id: number, response: ConfirmationChoice) => {
@@ -1587,14 +1744,16 @@ function TabRuntime({
     ? state.settings.workspaceDir.split(/[\\/]/).pop() || "workspace"
     : "Reasonix";
   const session = (() => {
+    if (state.currentSession) {
+      const s = state.sessions.find((x) => x.name === state.currentSession);
+      if (s?.summary?.trim()) return s.summary.trim();
+    }
     const firstUser = state.messages.find((m) => m.kind === "user");
     if (firstUser && firstUser.kind === "user") {
       const cleaned = firstUser.text.replace(/\s+/g, " ").trim();
       if (cleaned) return cleaned.length > 60 ? `${cleaned.slice(0, 60)}…` : cleaned;
     }
     if (state.currentSession) {
-      const s = state.sessions.find((x) => x.name === state.currentSession);
-      if (s?.summary?.trim()) return s.summary.trim();
       const m = state.currentSession.match(/^desktop-(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})/);
       if (m)
         return t("app.session.format", {
@@ -1690,6 +1849,7 @@ function TabRuntime({
           onNewChat={newChat}
           onLoadSession={(name) => sendRpc({ cmd: "session_load", name })}
           onDeleteSession={(name) => sendRpc({ cmd: "session_delete", name })}
+          onRenameSession={(name, title) => sendRpc({ cmd: "session_rename", name, title })}
           onOpenSettings={() => openSettingsAt("general")}
           onOpenRules={() => openSettingsAt("rules")}
           onOpenCommands={() => palette.setOpen(true)}
@@ -1788,22 +1948,40 @@ function TabRuntime({
                       );
                     }
                     if (m.kind === "error") {
+                      const toneVar = m.recoverable ? "var(--tone-warn)" : "var(--tone-err)";
+                      const bgVar = m.recoverable
+                        ? "var(--warn-soft, var(--danger-soft))"
+                        : "var(--danger-soft)";
+                      const labelKey = m.recoverable ? "app.warningLabel" : "app.errorLabel";
                       return (
                         <div
-                          key={`e-${i}`}
+                          key={m.id}
                           className="warn-card"
-                          style={{
-                            borderColor: "var(--tone-err)",
-                            background: "var(--danger-soft)",
-                          }}
+                          style={{ borderColor: toneVar, background: bgVar, position: "relative" }}
                         >
-                          <span className="ico" style={{ color: "var(--tone-err)" }}>
+                          <span className="ico" style={{ color: toneVar }}>
                             <I.warning size={16} />
                           </span>
-                          <div>
-                            <div className="tt">{t("app.errorLabel")}</div>
+                          <div style={{ flex: 1 }}>
+                            <div className="tt">{t(labelKey)}</div>
                             <div className="ds">{m.message}</div>
                           </div>
+                          <button
+                            type="button"
+                            className="warn-card-dismiss"
+                            title={t("app.dismissError")}
+                            onClick={() => dispatch({ t: "dismiss_error", id: m.id })}
+                            style={{
+                              background: "transparent",
+                              border: "none",
+                              color: toneVar,
+                              cursor: "pointer",
+                              padding: "4px",
+                              alignSelf: "flex-start",
+                            }}
+                          >
+                            <I.x size={14} />
+                          </button>
                         </div>
                       );
                     }
@@ -1840,7 +2018,7 @@ function TabRuntime({
                   {state.pendingConfirms.map((c) => (
                     <ConfirmApprovalCard
                       key={`cc-${c.id}`}
-                      c={c}
+                      prompt={c.prompt}
                       onAllow={() => resolveConfirm(c.id, { type: "run_once" })}
                       onAlwaysAllow={(prefix) =>
                         resolveConfirm(c.id, { type: "always_allow", prefix })
@@ -1851,7 +2029,7 @@ function TabRuntime({
                   {state.pendingPathAccess.map((p) => (
                     <PathAccessApprovalCard
                       key={`pa-${p.id}`}
-                      p={p}
+                      prompt={p.prompt}
                       onAllow={() => resolvePathAccess(p.id, { type: "run_once" })}
                       onAlwaysAllow={(prefix) =>
                         resolvePathAccess(p.id, { type: "always_allow", prefix })
@@ -2003,6 +2181,8 @@ function TabRuntime({
             onSetFontScale={onSetFontScale}
             fontFamily={fontFamily}
             onSetFontFamily={onSetFontFamily}
+            customFontFamily={customFontFamily}
+            onSetCustomFontFamily={onSetCustomFontFamily}
             initialPage={settingsPage}
             mcpSpecs={state.mcpSpecs}
             mcpBridged={state.mcpBridged}
@@ -2708,6 +2888,9 @@ export function App() {
     const v = localStorage.getItem("reasonix.fontFamily");
     return isFontFamily(v) ? v : FONT_FAMILY.SANS;
   });
+  const [customFontFamily, setCustomFontFamily] = useState<string>(() => {
+    return localStorage.getItem("reasonix.customFontFamily") ?? "";
+  });
   const [sideCollapsed, setSideCollapsed] = useState(
     () => localStorage.getItem("reasonix.sideCollapsed") === "1",
   );
@@ -2737,10 +2920,15 @@ export function App() {
   }, [fontScale]);
 
   useEffect(() => {
-    // CSS rules use var(--font-sans); changing it here re-styles every sans surface in one shot. Mono stays put because code/transcripts hardcode "Geist Mono".
-    document.documentElement.style.setProperty("--font-sans", FONT_FAMILY_STACK[fontFamily]);
+    const custom = customFontFamily.trim();
+    const stack =
+      fontFamily === FONT_FAMILY.CUSTOM && custom
+        ? custom
+        : FONT_FAMILY_STACK[fontFamily] ?? FONT_FAMILY_STACK.sans;
+    document.documentElement.style.setProperty("--font-sans", stack);
     localStorage.setItem("reasonix.fontFamily", fontFamily);
-  }, [fontFamily]);
+    localStorage.setItem("reasonix.customFontFamily", customFontFamily);
+  }, [fontFamily, customFontFamily]);
 
   useEffect(() => {
     const onCur = (e: Event) => {
@@ -2938,6 +3126,14 @@ export function App() {
       cleanups.push(...subs);
       try {
         await invoke("rpc_spawn");
+        // WebView reload (DevTools F5, host respawn) keeps the Node child
+        // alive but loses every $tab_opened / $settings / $needs_setup that
+        // already fired. Ask the desktop server to re-emit them.
+        if (!cancelled) {
+          await invoke("rpc_send", {
+            line: JSON.stringify({ cmd: "desktop_resync" }),
+          });
+        }
       } catch (err) {
         if (!cancelled) console.error("rpc_spawn failed", err);
       }
@@ -3052,6 +3248,8 @@ export function App() {
           onSetFontScale={setFontScale}
           fontFamily={fontFamily}
           onSetFontFamily={setFontFamily}
+          customFontFamily={customFontFamily}
+          onSetCustomFontFamily={setCustomFontFamily}
           sideCollapsed={sideCollapsed}
           ctxCollapsed={ctxCollapsed}
           onToggleSide={() => setSideCollapsed((v) => !v)}

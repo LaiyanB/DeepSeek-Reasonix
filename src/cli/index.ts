@@ -4,7 +4,7 @@
 import "./heap-limit-launch.js";
 
 import { Command } from "commander";
-import { readConfig } from "../config.js";
+import { loadProxyConfig, readConfig } from "../config.js";
 import { t } from "../i18n/index.js";
 import { VERSION } from "../index.js";
 import { listSessions } from "../memory/session.js";
@@ -23,8 +23,16 @@ async function maybeStartCpuProfile(flag: unknown): Promise<boolean> {
 
 // HTTPS_PROXY / HTTP_PROXY only reach Node's fetch via undici's global
 // dispatcher; install before any client (DeepSeek, web tools, dashboard)
-// constructs a fetch closure. Issue #646.
-installProxyIfConfigured();
+// constructs a fetch closure (#646). Argv is peeked manually here — commander
+// hasn't run yet — so position of `--no-proxy` doesn't matter and we can
+// honor it before any fetch closure captures the dispatcher.
+const cliNoProxy = process.argv.includes("--no-proxy");
+const cfgProxy = loadProxyConfig();
+installProxyIfConfigured(process.env, {
+  disabled: cliNoProxy || cfgProxy.disabled === true,
+  extraNoProxy: cfgProxy.noProxy,
+  bypassDeepSeekDirect: cfgProxy.bypassDeepSeekDirect,
+});
 
 markPhase("cli_module_loaded");
 
@@ -124,12 +132,14 @@ program
   .name("reasonix")
   .description(t("cli.description"))
   .version(VERSION)
-  .option("-c, --continue", t("cli.continue"));
+  .option("-c, --continue", t("cli.continue"))
+  .option("--no-mouse", t("ui.noMouseHint"))
+  .option("--no-proxy", t("ui.noProxyHint"));
 
 // `reasonix` with no subcommand → setup wizard on first run, otherwise `code`
 // in the current directory. Filesystem-less chat stays reachable via
 // `reasonix chat`.
-program.action(async (opts: { continue?: boolean }) => {
+program.action(async (opts: { continue?: boolean; mouse?: boolean }) => {
   const cfg = readConfig();
   const mode = resolveBareCommandMode(cfg);
   if (mode === "setup") {
@@ -138,7 +148,11 @@ program.action(async (opts: { continue?: boolean }) => {
     return;
   }
   const { codeCommand } = await import("./commands/code.js");
-  await codeCommand({ dir: process.cwd(), forceResume: !!opts.continue });
+  await codeCommand({
+    dir: process.cwd(),
+    forceResume: !!opts.continue,
+    noMouse: opts.mouse === false,
+  });
 });
 
 program
@@ -154,6 +168,8 @@ program
   .description(t("cli.code"))
   .option("-m, --model <id>", t("ui.modelOverride"))
   .option("--no-session", t("ui.noSession"))
+  .option("--no-mouse", t("ui.noMouseHint"))
+  .option("--no-proxy", t("ui.noProxyHint"))
   .option("-r, --resume", t("ui.resumeHint"))
   .option("-n, --new", t("ui.newHint"))
   .option("--transcript <path>", t("ui.transcriptHint"))
@@ -188,6 +204,7 @@ program
         dashboardPort: resolveDashboardPort(parseDashboardPortFlag(opts.dashboardPort), false),
         dashboardHost: resolveDashboardHost(opts.dashboardHost, false),
         dashboardToken: resolveDashboardToken(false),
+        noMouse: opts.mouse === false,
         systemAppend: opts.systemAppend,
         systemAppendFile: opts.systemAppendFile,
       });
@@ -206,6 +223,8 @@ program
   .option("--budget <usd>", t("ui.budgetHint"), (v) => Number.parseFloat(v))
   .option("--session <name>", t("ui.sessionNameHint"))
   .option("--no-session", t("ui.ephemeralHint"))
+  .option("--no-mouse", t("ui.noMouseHint"))
+  .option("--no-proxy", t("ui.noProxyHint"))
   .option("-r, --resume", t("ui.resumeHint"))
   .option("-c, --continue", t("cli.continue"))
   .option("-n, --new", t("ui.newHint"))
@@ -275,6 +294,7 @@ program
         ),
         dashboardHost: resolveDashboardHost(opts.dashboardHost, opts.config === false),
         dashboardToken: resolveDashboardToken(opts.config === false),
+        noMouse: opts.mouse === false,
       });
     } finally {
       if (profiling) await stopAndSaveCpuProfile();
@@ -297,6 +317,7 @@ program
   )
   .option("--mcp-prefix <str>", t("ui.mcpPrefixHintShort"))
   .option("--no-config", t("ui.noConfigHint"))
+  .option("--no-proxy", t("ui.noProxyHint"))
   .action(async (task: string, opts) => {
     const defaults = resolveDefaults({
       model: opts.model,

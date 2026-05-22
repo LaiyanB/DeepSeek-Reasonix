@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   const renderMock = vi.fn();
+  const enableMouseModeMock = vi.fn();
+  const disableMouseModeMock = vi.fn();
   const loadApiKeyMock = vi.fn(() => "sk-test");
   const readConfigMock = vi.fn(() => ({ mcpDisabled: [] as string[] }));
   const searchEnabledMock = vi.fn(() => false);
@@ -55,6 +57,8 @@ const mocks = vi.hoisted(() => {
   return {
     bridgeMcpToolsMock,
     closeMock,
+    disableMouseModeMock,
+    enableMouseModeMock,
     FakeMcpClient,
     FakeTransport,
     initializeMock,
@@ -86,6 +90,11 @@ vi.mock("../src/config.js", async (importOriginal) => {
 
 vi.mock("../src/env.js", () => ({
   loadDotenv: mocks.loadDotenvMock,
+}));
+
+vi.mock("../src/cli/ui/mouse-mode.js", () => ({
+  disableMouseMode: mocks.disableMouseModeMock,
+  enableMouseMode: mocks.enableMouseModeMock,
 }));
 
 vi.mock("../src/memory/session.js", () => ({
@@ -129,9 +138,12 @@ async function captureStartupState(opts?: {
   bridgeError?: Error;
   mcp?: string[];
   lang?: "EN" | "zh-CN";
+  noMouse?: boolean;
 }) {
   vi.resetModules();
   mocks.renderMock.mockReset();
+  mocks.enableMouseModeMock.mockClear();
+  mocks.disableMouseModeMock.mockClear();
   mocks.loadDotenvMock.mockClear();
   mocks.loadApiKeyMock.mockClear();
   mocks.initializeMock.mockReset();
@@ -198,6 +210,7 @@ async function captureStartupState(opts?: {
     system: "s",
     mcp: opts?.mcp ?? ["fs=npx -y @scope/fs /tmp"],
     seedTools: new ToolRegistry(),
+    noMouse: opts?.noMouse,
   });
 
   expect(capturedProps).not.toBeNull();
@@ -210,9 +223,12 @@ async function captureStartupState(opts?: {
 
 // Dynamic chat.js / tools.js import inside captureStartupState pushes
 // past the 5s default under full-suite worker contention; pass in
-// isolation. 15s leaves headroom for cold module-cache + slow CI hosts
-// without making the suite noticeably slower in the happy path.
-describe("chatCommand MCP startup summary states", { timeout: 15_000 }, () => {
+// isolation. The previous 15s ceiling timed out the first test on
+// Windows CI under coverage (v8) instrumentation — the FIRST cold
+// module load eats most of the budget on slow hosts. 30s leaves
+// headroom without slowing the happy path (passing tests still
+// finish in ~400ms after the first cold run warms the worker).
+describe("chatCommand MCP startup summary states", { timeout: 30_000 }, () => {
   beforeEach(() => {
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
   });
@@ -237,6 +253,14 @@ describe("chatCommand MCP startup summary states", { timeout: 15_000 }, () => {
     expect(props.mcpSpecs).toEqual(["fs=npx -y @scope/fs /tmp"]);
     expect(props.mcpServers).toEqual([]);
     expect(mocks.bridgeMcpToolsMock).not.toHaveBeenCalled();
+  });
+
+  it("enables mouse tracking by default and honors noMouse opt-out", async () => {
+    await captureStartupState();
+    expect(mocks.enableMouseModeMock).toHaveBeenCalledTimes(1);
+
+    await captureStartupState({ noMouse: true });
+    expect(mocks.enableMouseModeMock).not.toHaveBeenCalled();
   });
 
   it("never blocks chatCommand on bridge failure — App.tsx surfaces the lifecycle error post-mount", async () => {

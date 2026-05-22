@@ -3,24 +3,22 @@
  * Extracted from App.tsx per #565 Phase 2.
  */
 
-import { Box, Text, useStdout } from "ink";
+import { Box, Text } from "ink";
 import React from "react";
-import stringWidth from "string-width";
 
 import type { EditMode } from "../../config.js";
 import type { JobRegistry } from "../../tools/jobs.js";
 
 import { AtMentionSuggestions } from "./AtMentionSuggestions.js";
 import { PromptInput } from "./PromptInput.js";
+import { ShortcutsHelpModal } from "./ShortcutsHelpModal.js";
 import type { SlashArgPickerProps } from "./SlashArgPicker.js";
 import { SlashArgPicker } from "./SlashArgPicker.js";
 import type { SlashSuggestionsProps } from "./SlashSuggestions.js";
 import { SlashSuggestions } from "./SlashSuggestions.js";
-import { ModeStatusBar } from "./layout/LiveRows.js";
+
 import { StatusRow } from "./layout/StatusRow.js";
 import { formatLoopStatus } from "./loop.js";
-import { useChatScrollState } from "./state/chat-scroll-provider.js";
-import { FG, SURFACE } from "./theme/tokens.js";
 
 import type { StatusBarConfig } from "./layout/StatusRow.js";
 
@@ -36,11 +34,18 @@ export interface ComposerAreaProps {
   jobs?: JobRegistry;
   activeLoop?: Parameters<typeof LoopStatusRow>[0]["loop"] | null;
   statusBar: StatusBarConfig;
+  /** Current mode for input box bottom display. */
+  mode?: string;
+  /** Current model for input box bottom display. */
+  model?: string;
+  /** Show the shortcuts help modal above the input box. */
+  showShortcuts?: boolean;
 
   // ── prompt ───────────────────────────────────────────────────────
   input: string;
   setInput: (next: string) => void;
   busy: boolean;
+  steerBusy?: boolean;
   onSubmit: (raw: string) => Promise<void>;
   onHistoryPrev: () => void;
   onHistoryNext: () => void;
@@ -65,25 +70,6 @@ export interface ComposerAreaProps {
   slashArgSelected: number;
 }
 
-// ── History scroll hint ────────────────────────────────────────────
-
-const HistoryHint: React.FC<{ children: React.ReactNode }> = React.memo(({ children }) => {
-  const pinned = useChatScrollState((s: { pinned: boolean }) => s.pinned);
-  const { stdout } = useStdout();
-  if (!pinned) {
-    const text = "scrolled up — reading history — End / PgDn to return — ↓ to advance one line";
-    const cols = stdout?.columns ?? 80;
-    const pad = Math.max(0, cols - stringWidth(text));
-    return (
-      <Text color={FG.faint} backgroundColor={SURFACE.bgElev}>
-        {text + " ".repeat(pad)}
-      </Text>
-    );
-  }
-  return <>{children}</>;
-});
-HistoryHint.displayName = "HistoryHint";
-
 // ── Component ─────────────────────────────────────────────────────
 
 export const ComposerArea: React.FC<ComposerAreaProps> = React.memo(
@@ -96,9 +82,13 @@ export const ComposerArea: React.FC<ComposerAreaProps> = React.memo(
     jobs,
     activeLoop,
     statusBar,
+    mode,
+    model,
+    showShortcuts,
     input,
     setInput,
     busy,
+    steerBusy,
     onSubmit,
     onHistoryPrev,
     onHistoryNext,
@@ -139,33 +129,27 @@ export const ComposerArea: React.FC<ComposerAreaProps> = React.memo(
             />
           ) : null}
         </Box>
+        {showShortcuts ? <ShortcutsHelpModal /> : null}
         <PromptInput
           value={input}
           onChange={setInput}
           onSubmit={onSubmit}
           disabled={busy}
+          steerBusy={steerBusy}
           onHistoryPrev={onHistoryPrev}
           onHistoryNext={onHistoryNext}
           onOpenExternalEditor={onOpenExternalEditor}
           onCursorChange={onCursorChange}
           rowsAfter={1 + (activeLoop ? 1 : 0) + (jobs ? 1 : 0)}
+          mode={mode}
+          model={model}
         />
         {activeLoop ? <LoopStatusRow loop={activeLoop} /> : null}
-        {jobs ? (
-          <ModeStatusBar
-            editMode={editMode}
-            pendingCount={pendingCount}
-            flash={modeFlash}
-            planMode={planMode}
-            undoArmed={undoArmed}
-            jobs={jobs}
-          />
-        ) : null}
         <StatusRow statusBar={statusBar} />
       </Box>
     );
 
-    return <HistoryHint>{inputArea}</HistoryHint>;
+    return inputArea;
   },
 );
 ComposerArea.displayName = "ComposerArea";

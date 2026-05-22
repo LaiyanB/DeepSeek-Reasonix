@@ -51,9 +51,16 @@ import {
 import { type RepairReport, ToolCallRepair } from "./repair/index.js";
 import { SessionStats, type TurnStats } from "./telemetry/stats.js";
 import { ToolRegistry } from "./tools.js";
+import { parseRateLimitedToolResult } from "./tools/rate-limit.js";
 import type { ChatMessage, ToolCall } from "./types.js";
 
 const ESCALATION_MODEL = "deepseek-v4-pro";
+export const MID_TURN_STEER_WRAPPER =
+  "[Mid-turn steer queued by the user. Do not treat this as a new task; use it only as additional guidance for the current task after completing the current step.]";
+
+function formatSteerUserMessage(content: string): string {
+  return [MID_TURN_STEER_WRAPPER, content].join("\n");
+}
 
 export {
   fixToolCallPairing,
@@ -139,17 +146,21 @@ export class CacheFirstLoop {
   /** Authoritative running-id set — UI cards consult this instead of trusting end-event delivery. Insert at dispatch entry, delete in finally. */
   private readonly _inflight = new InflightSet();
 
-  /** Typeahead steer message set by the UI; step() consumes it at the next iter boundary. */
-  private _steer: string | null = null;
+  /** Typeahead steer messages set by the UI; step() consumes one at each iter boundary. */
+  private readonly _steerQueue: string[] = [];
 
   /** Set true when a steer was consumed this turn; cleared on next step() entry. */
   private _steerConsumed = false;
 
   /** UI calls this to inject a mid-turn steer message without aborting the current turn.
-   *  New text resets steerConsumed — a fresh steer hasn't been consumed yet. */
+   *  New text resets steerConsumed because a fresh steer is queued. */
   steer(text: string | null): void {
-    this._steer = text;
-    if (text !== null) this._steerConsumed = false;
+    if (text === null) {
+      this._steerQueue.length = 0;
+      return;
+    }
+    this._steerQueue.push(text);
+    this._steerConsumed = false;
   }
 
   /** True when a steer was consumed this turn (UI gate to avoid double-submit). */
@@ -253,6 +264,7 @@ export class CacheFirstLoop {
       sessionName: this.sessionName,
       getAbortSignal: () => this._turnAbort.signal,
       getCurrentTurn: () => this._turn,
+      getSystemPrompt: () => this.prefix.system,
     });
   }
 
@@ -264,6 +276,11 @@ export class CacheFirstLoop {
     summaryChars: number;
   }> {
     return this.context.fold(this.model, opts);
+  }
+
+  /** Real-time token count of the current log — forwarded to Desktop for meter refresh. */
+  getCurrentLogTokens(): number {
+    return this.context.getLogTokens();
   }
 
   appendAndPersist(message: ChatMessage): void {
@@ -485,11 +502,9 @@ export class CacheFirstLoop {
   }
   private _inflightCounter = 0;
 
-  private buildMessages(pendingUser: string | null): ChatMessage[] {
+  private buildMessages(): ChatMessage[] {
     const healedMessages = this.healActiveLogBeforeSend();
-    const msgs: ChatMessage[] = [...this.prefix.toMessages(), ...healedMessages];
-    if (pendingUser !== null) msgs.push({ role: "user", content: pendingUser });
-    return msgs;
+    return [...this.prefix.toMessages(), ...healedMessages];
   }
 
   private healActiveLogBeforeSend(): ChatMessage[] {
@@ -584,6 +599,7 @@ export class CacheFirstLoop {
             cap: this.budgetUsd.toFixed(2),
           }),
         };
+        this._steerQueue.length = 0;
         return;
       }
       if (!this._budgetWarned && spent >= this.budgetUsd * 0.8) {
@@ -648,54 +664,36 @@ export class CacheFirstLoop {
     // first round-trip still leaves the message in the log; the user can
     // /retry without re-typing.
     this.appendAndPersist({ role: "user", content: userInput });
-    let pendingUser: string | null = null;
     const toolSpecs = this.prefix.tools();
+    let rateLimitWarningShown = false;
 
     for (let iter = 0; ; iter++) {
       if (signal.aborted) {
-        // Esc means "stop now" — not "stop and force another 30-90s
-        // reasoner call to produce a summary I didn't ask for". The
-        // user's mental model of cancel is immediate. We emit a
-        // synthetic assistant_final (tagged forcedSummary so the
-        // code-mode applier ignores it) with a short stopped
-        // message, then done. The prior tool outputs are still in
-        // the log if the user wants to continue — asking again
-        // will hit a warm cache and be cheap.
-        //
-        // Context-guard still calls forceSummary because there the USER
-        // didn't choose to stop — we did — and leaving them staring at
-        // nothing is worse than one extra call.
-        yield {
-          turn: this._turn,
-          role: "warning",
-          content: t("loop.abortedAtIter", { iter }),
-        };
-        const stoppedMsg =
-          "[aborted by user (Esc) — no summary produced. Ask again or /retry when ready; prior tool output is still in the log.]";
-        // Synthetic assistant turn — no real model output exists. For
-        // reasoner sessions R1 still demands `reasoning_content` on
-        // every assistant message, so we attach an empty-string
-        // placeholder to satisfy the validator without inventing
-        // reasoning we don't have. V3 gets a plain message as before.
-        this.appendAndPersist(buildSyntheticAssistantMessage(stoppedMsg, this.model));
-        yield {
-          turn: this._turn,
-          role: "assistant_final",
-          content: stoppedMsg,
-          forcedSummary: true,
-        };
-        yield { turn: this._turn, role: "done", content: stoppedMsg };
-        // Reset to a fresh, non-aborted controller before returning.
-        // Without this the carry-abort logic above sees the still-
-        // aborted controller on the NEXT step() entry and immediately
-        // re-aborts at iter 0, locking the session: every subsequent
-        // user message produces "stopped without producing a summary"
-        // before any work happens. A user-initiated Esc is a discrete
-        // event tied to ONE turn; it must not bleed into the next.
-        // (The race scenario the carry-abort handles — abort fired in
-        // the async window before step() entry — still works: a fresh
-        // abort() between turns aborts the new controller below.)
-        this._turnAbort = new AbortController();
+        // Reset in finally — the consumer (desktop runTurn) breaks the
+        // for-await on its own aborter between our yields, which calls
+        // generator.return() and skips post-yield straight-line code.
+        // Without finally the reset is lost and carryAbort locks every
+        // future step() at iter 0.
+        try {
+          yield {
+            turn: this._turn,
+            role: "warning",
+            content: t("loop.abortedAtIter", { iter }),
+          };
+          const stoppedMsg =
+            "[aborted by user (Esc) — no summary produced. Ask again or /retry when ready; prior tool output is still in the log.]";
+          this.appendAndPersist(buildSyntheticAssistantMessage(stoppedMsg, this.model));
+          yield {
+            turn: this._turn,
+            role: "assistant_final",
+            content: stoppedMsg,
+            forcedSummary: true,
+          };
+          yield { turn: this._turn, role: "done", content: stoppedMsg };
+        } finally {
+          this._turnAbort = new AbortController();
+        }
+        this._steerQueue.length = 0;
         return;
       }
       // Bridge the silence between the PREVIOUS iter's tool result and
@@ -717,20 +715,16 @@ export class CacheFirstLoop {
           content: t("loop.toolUploadStatus"),
         };
       }
-      let messages = this.buildMessages(pendingUser);
+      let messages = this.buildMessages();
 
-      // Consume a typeahead steer if the UI wrote one between iters.
-      // Injecting as a user message via appendAndPersist means the
-      // next buildMessages() (or the fold rebuild below) will include it.
-      if (this._steer !== null) {
-        const steer = this._steer;
-        this._steer = null;
-        this._steerConsumed = true;
-        this.appendAndPersist({ role: "user", content: steer });
-        messages = this.buildMessages(pendingUser);
-        // Treat the steer as a fresh user utterance — reset pendingUser
-        // since it's already in the log now.
-        pendingUser = null;
+      if (this._steerQueue.length > 0) {
+        const steer = this._steerQueue.shift()!;
+        this._steerConsumed = this._steerQueue.length === 0;
+        this.appendAndPersist({
+          role: "user",
+          content: formatSteerUserMessage(steer),
+        });
+        messages = this.buildMessages();
         yield {
           turn: this._turn,
           role: "steer",
@@ -745,17 +739,17 @@ export class CacheFirstLoop {
       {
         const decision = this.context.decidePreflight(messages, this.prefix.toolSpecs, this.model);
         if (decision.needsAction) {
-          const { estimateTokens: estimate, ctxMax } = decision;
+          const { estimateTokens: estimate, estimateBytes, ctxMax } = decision;
           yield {
             turn: this._turn,
             role: "status",
             content: t("loop.preflightTruncateStatus"),
           };
           const result = this.context.mechanicalTruncate(this.model, {
-            allowEmpty: pendingUser !== null,
+            allowEmpty: false,
           });
           if (result.folded) {
-            messages = this.buildMessages(pendingUser);
+            messages = this.buildMessages();
             const after = this.context.decidePreflight(messages, this.prefix.toolSpecs, this.model);
             const stillFull = after.needsAction;
             yield {
@@ -767,6 +761,7 @@ export class CacheFirstLoop {
                   estimate: after.estimateTokens.toLocaleString(),
                   ctxMax: after.ctxMax.toLocaleString(),
                   pct: Math.round((after.estimateTokens / after.ctxMax) * 100),
+                  bodyKB: Math.round(after.estimateBytes / 1024).toLocaleString(),
                   beforeMessages: result.beforeMessages,
                   afterMessages: result.afterMessages,
                 },
@@ -780,6 +775,7 @@ export class CacheFirstLoop {
                 estimate: estimate.toLocaleString(),
                 ctxMax: ctxMax.toLocaleString(),
                 pct: Math.round((estimate / ctxMax) * 100),
+                bodyKB: Math.round(estimateBytes / 1024).toLocaleString(),
               }),
             };
           }
@@ -944,14 +940,16 @@ export class CacheFirstLoop {
         // synthetic OR user re-prompt) starts immediately and gets to
         // produce its own answer.
         if (signal.aborted) {
-          yield { turn: this._turn, role: "done", content: "" };
-          // Reset the controller so the carry-abort check at the top of
-          // the NEXT step() doesn't inherit this turn's aborted state.
-          // Without this, a queued-submit triggered by App.tsx (e.g.
-          // ShellConfirm "run once" → loop.abort() + setQueuedSubmit)
-          // produces a spurious "aborted at iter 0/64" the moment the
-          // synthetic message starts processing, locking the session.
-          this._turnAbort = new AbortController();
+          // Reset in finally — same rationale as the iter-start handler:
+          // if the consumer breaks the for-await before draining `done`,
+          // generator.return() would skip a bare post-yield reset and
+          // leave carryAbort locked on the next step().
+          try {
+            yield { turn: this._turn, role: "done", content: "" };
+          } finally {
+            this._turnAbort = new AbortController();
+          }
+          this._steerQueue.length = 0;
           return;
         }
         const probe = is5xxError(err) ? await probeDeepSeekReachable(this.client) : undefined;
@@ -961,6 +959,7 @@ export class CacheFirstLoop {
           content: "",
           error: formatLoopError(err as Error, probe),
         };
+        this._steerQueue.length = 0;
         return;
       }
 
@@ -1080,11 +1079,16 @@ export class CacheFirstLoop {
       }
 
       if (repairedCalls.length === 0) {
+        if (this._steerQueue.length > 0) {
+          continue;
+        }
         if (allSuppressed) {
           yield* forceSummaryAfterIterLimit(this.summaryContext(), { reason: "stuck" });
+          this._steerQueue.length = 0;
           return;
         }
         yield { turn: this._turn, role: "done", content: assistantContent };
+        this._steerQueue.length = 0;
         return;
       }
 
@@ -1133,6 +1137,7 @@ export class CacheFirstLoop {
         };
         this.context.trimTrailingToolCalls();
         yield* forceSummaryAfterIterLimit(this.summaryContext(), { reason: "context-guard" });
+        this._steerQueue.length = 0;
         return;
       }
 
@@ -1207,6 +1212,17 @@ export class CacheFirstLoop {
           for (const w of preWarnings) yield w;
           for (const w of postWarnings) yield w;
 
+          // Keep the structured result in history; the warning is only host-side visibility.
+          const rateLimited = parseRateLimitedToolResult(result);
+          if (rateLimited && !rateLimitWarningShown) {
+            rateLimitWarningShown = true;
+            yield {
+              turn: this._turn,
+              role: "warning",
+              content: rateLimited.message,
+            };
+          }
+
           this.appendAndPersist({
             role: "tool",
             tool_call_id: call.id ?? "",
@@ -1235,7 +1251,7 @@ export class CacheFirstLoop {
     return {
       client: this.client,
       signal: this._turnAbort.signal,
-      buildMessages: () => this.buildMessages(null),
+      buildMessages: () => this.buildMessages(),
       appendAndPersist: (m) => this.appendAndPersist(m),
       recordStats: (model, usage) => this.stats.record(this._turn, model, usage),
       turn: this._turn,
