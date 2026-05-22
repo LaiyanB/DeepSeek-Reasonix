@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { deleteSession, listSessions, sessionPath } from "../../memory/session.js";
+import { deleteSession, freshSessionName, listSessions, sessionPath } from "../../memory/session.js";
 import type { DashboardContext } from "../context.js";
 import type { ApiResult } from "../router.js";
 
@@ -67,8 +67,10 @@ export async function handleSessions(
     };
   }
 
-  // New session — mints a fresh session by calling switchSession(undefined),
-  // which routes through the same path the SessionPicker "new" branch takes.
+  // New session — mirror the TUI SessionPicker "new" branch by minting
+  // a real session name. Passing undefined would remount App as an
+  // ephemeral session and leave the attached dashboard with stale
+  // session state, which makes the SPA lose its API connection.
   if (method === "POST" && rest.length === 1 && rest[0] === "new") {
     if (!ctx.switchSession) {
       return {
@@ -76,7 +78,8 @@ export async function handleSessions(
         body: { error: "live session swap requires an attached CLI session." },
       };
     }
-    const result = ctx.switchSession(undefined);
+    const currentName = ctx.getSessionName?.() ?? undefined;
+    const result = ctx.switchSession(freshSessionName(currentName));
     if (!result.ok) return { status: 500, body: { error: result.reason } };
     return { status: 200, body: { ok: true } };
   }
