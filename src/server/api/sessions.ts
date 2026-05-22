@@ -1,5 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
-import { deleteSession, freshSessionName, listSessions, sessionPath } from "../../memory/session.js";
+import {
+  deleteSession,
+  freshSessionName,
+  listSessions,
+  sessionPath,
+} from "../../memory/session.js";
 import type { DashboardContext } from "../context.js";
 import type { ApiResult } from "../router.js";
 
