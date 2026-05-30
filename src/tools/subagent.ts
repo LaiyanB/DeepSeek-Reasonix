@@ -57,6 +57,8 @@ export interface SpawnSubagentOptions {
   system: string;
   task: string;
   model?: string;
+  /** Provider ID for resolving model names in subagent API calls. Defaults to "deepseek". */
+  providerId?: string;
   maxResultChars?: number;
   sink?: SubagentSink;
   /** Forwarded into the child loop so parent Esc cancels nested work. */
@@ -89,6 +91,8 @@ export interface SubagentToolOptions {
   defaultSystem?: string;
   projectRoot?: string;
   defaultModel?: string;
+  /** Provider ID for resolving model names in subagent API calls. Defaults to "deepseek". */
+  providerId?: string;
   maxResultChars?: number;
   sink?: SubagentSink;
   /** Fires once per spawn, after `spawnSubagent` returns and before its result is formatted for the parent. Bind a `SubagentTelemetry.record` here for automatic distillation capture. */
@@ -211,6 +215,7 @@ export async function spawnSubagent(opts: SpawnSubagentOptions): Promise<Subagen
     prefix: childPrefix,
     tools: childTools,
     model,
+    providerId: opts.providerId ?? "deepseek",
     // Subagents run on a constrained thinking budget by default — the
     // task is already narrow by construction, and `high` cuts output
     // tokens substantially vs `max`.
@@ -548,6 +553,7 @@ export function registerSubagentTool(
         system,
         task,
         model,
+        providerId: opts.providerId,
         maxResultChars,
         sink,
         parentSignal: ctx?.signal,

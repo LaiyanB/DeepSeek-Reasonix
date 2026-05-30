@@ -16,18 +16,23 @@ import { pickPrimaryBalance } from "../../client.js";
 import { codeSystemPrompt } from "../../code/prompt.js";
 import { applyPlanMode, buildCodeToolset } from "../../code/setup.js";
 import {
+  API_PROVIDER_PRESETS,
   DEFAULT_MODEL,
   type DesktopCloseBehavior,
   type DesktopOpenTab,
   type EditMode,
   type McpServerConfig,
   type ReasonixConfig,
+  SUPPORTED_OFFICIAL_MODELS,
   bridgeEndpointEnv,
   isPlausibleKey,
   isReasoningEffort,
   loadApiKey,
+  loadApiKeyForProvider,
+  loadApiProvider,
   loadBaiduApiKey,
   loadBraveApiKey,
+  loadCustomProviders,
   loadDesktopCloseBehavior,
   loadDesktopOpenTabs,
   loadEditMode,
@@ -51,8 +56,13 @@ import {
   pushRecentWorkspace,
   readConfig,
   webSearchEngine as readWebSearchEngine,
+  removeCustomProvider,
+  resolveModelForProvider,
   saveApiKey,
+  saveApiKeyForProvider,
+  saveApiProvider,
   saveBaseUrl,
+  saveCustomProvider,
   saveDesktopCloseBehavior,
   saveDesktopOpenTabs,
   saveEditMode,
@@ -202,6 +212,9 @@ type InMessage = { tabId?: string } & (
       subagentModels?: Record<string, "flash" | "pro">;
       contextTokens?: Record<string, number>;
       showSystemEvents?: boolean;
+      apiProvider?: string;
+      apiKey?: string;
+      customProviders?: { add?: { id: string; baseUrl: string; name?: string }; remove?: string };
     }
   | { cmd: "qq_status_get" }
   | { cmd: "qq_connect" }
@@ -285,6 +298,12 @@ interface SettingsEvent {
   contextTokens?: Record<string, number>;
   showSystemEvents?: boolean;
   version: string;
+  apiProvider?: string;
+  apiKeys?: Record<string, string | undefined>;
+  customProviders?: Record<string, { baseUrl: string; name?: string }>;
+  availableProviders?: Array<{ id: string; name: string; baseUrl: string; custom: boolean }>;
+  /** Canonical → provider-specific model names for the current provider. */
+  availableModels?: Record<string, string>;
 }
 
 interface QQSettingsEvent {
@@ -1013,6 +1032,27 @@ function emitSettings(tab: Tab): void {
   const editMode = loadEditMode();
   if (tab.toolset) applyPlanMode(tab.toolset.tools, editMode);
   const recent = loadRecentWorkspaces().filter((p) => p !== tab.rootDir);
+  const cfg = readConfig();
+  const providerId = loadApiProvider();
+  const customProviders = cfg.customProviders ?? {};
+  // Collect masked key prefixes for ALL providers so the UI can show
+  // which ones already have a saved key when switching.
+  // Read apiKeys directly — no fallback to legacy apiKey, so each
+  // provider shows its own prefix and "(not set)" for unsaved ones.
+  const allApiKeys: Record<string, string | undefined> = {};
+  const allProviderIds = [
+    ...API_PROVIDER_PRESETS.map((p) => p.id),
+    ...Object.keys(customProviders),
+  ];
+  for (const pid of allProviderIds) {
+    const k = cfg.apiKeys?.[pid];
+    if (k) allApiKeys[pid] = `${k.slice(0, 6)}…${k.slice(-3)}`;
+  }
+  // Build canonical → provider-specific model name map for the settings UI.
+  const availableModels: Record<string, string> = {};
+  for (const canonical of SUPPORTED_OFFICIAL_MODELS) {
+    availableModels[canonical] = resolveModelForProvider(providerId, canonical);
+  }
   emit(
     {
       type: "$settings",
@@ -1027,12 +1067,30 @@ function emitSettings(tab: Tab): void {
       editor: loadEditor(),
       desktopCloseBehavior: loadDesktopCloseBehavior(),
       webSearchEngine: readWebSearchEngine(),
-      webSearchEndpoint: readConfig().webSearchEndpoint,
+      webSearchEndpoint: cfg.webSearchEndpoint,
       webSearchApiKeys: collectWebSearchApiKeyPrefixes(),
       subagentModels: loadSubagentModels(),
-      contextTokens: readConfig().contextTokens,
+      contextTokens: cfg.contextTokens,
       showSystemEvents: loadShowSystemEvents(),
       version: VERSION,
+      apiProvider: providerId,
+      apiKeys: allApiKeys,
+      customProviders,
+      availableProviders: [
+        ...API_PROVIDER_PRESETS.map((p) => ({
+          id: p.id,
+          name: p.name,
+          baseUrl: p.baseUrl,
+          custom: false,
+        })),
+        ...Object.entries(customProviders).map(([id, c]) => ({
+          id,
+          name: c.name ?? id,
+          baseUrl: c.baseUrl,
+          custom: true,
+        })),
+      ],
+      availableModels,
     },
     tab.id,
   );
@@ -1379,11 +1437,13 @@ function buildRuntimeFor(tab: Tab): RuntimeState {
   const client = new DeepSeekClient({ apiKey: ep.apiKey, baseUrl: ep.baseUrl });
   const prefix = new ImmutablePrefix({ system: tab.system, toolSpecs: toolset.tools.specs() });
   const reasoningEffort = loadReasoningEffort();
+  const providerId = loadApiProvider();
   const loop = new CacheFirstLoop({
     client,
     prefix,
     tools: toolset.tools,
     model: tab.currentModel,
+    providerId,
     budgetUsd: tab.budgetUsd,
     session: tab.currentSession,
     reasoningEffort,
@@ -3308,6 +3368,22 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
               });
               if (tab.runtime) tab.runtime = buildRuntimeFor(tab);
             }
+          }
+        }
+        if (msg.apiProvider !== undefined) {
+          saveApiProvider(msg.apiProvider);
+        }
+        if (msg.apiKey !== undefined) {
+          const pid = loadApiProvider();
+          saveApiKeyForProvider(pid, msg.apiKey);
+        }
+        if (msg.customProviders !== undefined) {
+          if (msg.customProviders.add) {
+            const { id, baseUrl, name } = msg.customProviders.add;
+            saveCustomProvider(id, baseUrl, name);
+          }
+          if (msg.customProviders.remove) {
+            removeCustomProvider(msg.customProviders.remove);
           }
         }
         emitSettings(tab);

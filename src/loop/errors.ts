@@ -77,6 +77,12 @@ export function isDeepSeekHost(baseUrl: string | undefined | null): boolean {
   }
 }
 
+/** 检测是否为第三方提供商（非 DeepSeek 官方） */
+export function isThirdPartyProvider(baseUrl: string | undefined | null): boolean {
+  if (!baseUrl) return false;
+  return !isDeepSeekHost(baseUrl);
+}
+
 function is5xxStatus(status: string): boolean {
   return status === "500" || status === "502" || status === "503" || status === "504";
 }

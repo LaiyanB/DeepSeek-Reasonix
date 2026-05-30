@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { DeepSeekClient } from "../../client.js";
-import { loadEndpoint } from "../../config.js";
+import { loadApiProvider, loadEndpoint, resolveModelForProvider } from "../../config.js";
 import { loadDotenv } from "../../env.js";
 
 export interface CommitOptions {
@@ -268,7 +268,7 @@ export async function commitCommand(opts: CommitOptions = {}): Promise<void> {
   }
 
   const client = new DeepSeekClient({ apiKey: ep.apiKey, baseUrl: ep.baseUrl });
-  const model = opts.model ?? DEFAULT_MODEL;
+  const model = resolveModelForProvider(loadApiProvider(), opts.model ?? DEFAULT_MODEL);
   const recentCommits = readRecentCommits();
 
   let message = "";

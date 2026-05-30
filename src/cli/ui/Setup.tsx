@@ -1,8 +1,16 @@
 import { Box, Text, useApp } from "ink";
 import React, { useState } from "react";
-import { defaultConfigPath, isPlausibleKey, redactKey, saveApiKey } from "../../config.js";
+import {
+  type ApiProviderPreset,
+  DEFAULT_PROVIDER_ID,
+  defaultConfigPath,
+  isPlausibleKey,
+  redactKey,
+  saveApiKeyForProvider,
+} from "../../config.js";
 import { t } from "../../i18n/index.js";
 import { MaskedInput } from "./MaskedInput.js";
+import { ProviderPicker } from "./ProviderPicker.js";
 import { COLOR, GLYPH, GRADIENT } from "./theme.js";
 import { FG } from "./theme/tokens.js";
 
@@ -10,10 +18,19 @@ export interface SetupProps {
   onReady: (apiKey: string) => void;
 }
 
+type SetupStep = "provider" | "apikey";
+
 export function Setup({ onReady }: SetupProps) {
+  const [step, setStep] = useState<SetupStep>("provider");
+  const [selectedProvider, setSelectedProvider] = useState<ApiProviderPreset | null>(null);
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const { exit } = useApp();
+
+  const handleProviderChoose = (provider: ApiProviderPreset) => {
+    setSelectedProvider(provider);
+    setStep("apikey");
+  };
 
   const handleSubmit = (raw: string) => {
     const trimmed = raw.trim();
@@ -27,13 +44,18 @@ export function Setup({ onReady }: SetupProps) {
       return;
     }
     try {
-      saveApiKey(trimmed);
+      const providerId = selectedProvider?.id ?? DEFAULT_PROVIDER_ID;
+      saveApiKeyForProvider(providerId, trimmed);
     } catch (err) {
       setError(t("wizard.reviewSaveError", { message: (err as Error).message }));
       return;
     }
     onReady(trimmed);
   };
+
+  if (step === "provider") {
+    return <ProviderPicker onChoose={handleProviderChoose} onCancel={() => exit()} />;
+  }
 
   return (
     <Box flexDirection="column" paddingX={1} marginY={1}>
@@ -43,6 +65,9 @@ export function Setup({ onReady }: SetupProps) {
         </Text>
         <Text>{"  "}</Text>
         <Text bold>{t("wizard.welcomeTitle")}</Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text color={COLOR.info}>{`提供商: ${selectedProvider?.name ?? "DeepSeek 官方"}`}</Text>
       </Box>
       <Box marginTop={1}>
         <Text color={COLOR.info}>{t("wizard.apiKeyPrompt")}</Text>

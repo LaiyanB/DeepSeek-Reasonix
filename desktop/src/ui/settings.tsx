@@ -78,7 +78,6 @@ export function SettingsModal({
   qq,
   onClose,
   onSave,
-  onSaveApiKey,
   onLoadQQ,
   onConnectQQ,
   onDisconnectQQ,
@@ -117,7 +116,6 @@ export function SettingsModal({
   qq: QQDesktopSettingsState | null;
   onClose: () => void;
   onSave: (patch: SettingsPatch) => void;
-  onSaveApiKey: (key: string) => void;
   onLoadQQ: () => void;
   onConnectQQ: () => void;
   onDisconnectQQ: () => void;
@@ -201,7 +199,19 @@ export function SettingsModal({
                 onPickWorkspace={onPickWorkspace}
               />
             )}
-            {page === "models" && <PageModels settings={settings} onSave={onSave} />}
+            {page === "models" && (
+              <>
+                <ApiKeySection
+                  baseUrl={settings.baseUrl}
+                  apiKeyPrefix={settings.apiKeyPrefix}
+                  availableProviders={settings.availableProviders}
+                  apiProvider={settings.apiProvider}
+                  apiKeys={settings.apiKeys}
+                  onSave={onSave}
+                />
+                <PageModels settings={settings} onSave={onSave} />
+              </>
+            )}
             {page === "mcp" && (
               <PageMCP
                 specs={mcpSpecs}
@@ -232,12 +242,6 @@ export function SettingsModal({
             {page === "shortcuts" && <PageShortcuts />}
             {page === "general" ? (
               <>
-                <ApiKeySection
-                  baseUrl={settings.baseUrl}
-                  apiKeyPrefix={settings.apiKeyPrefix}
-                  onSave={onSave}
-                  onSaveApiKey={onSaveApiKey}
-                />
                 <QQChannelSection
                   qq={qq}
                   configureOpen={qqConfigureOpen}
@@ -967,25 +971,62 @@ function WebSearchApiKeyRow({
 function ApiKeySection({
   baseUrl,
   apiKeyPrefix,
+  availableProviders,
+  apiProvider,
+  apiKeys,
   onSave,
-  onSaveApiKey,
 }: {
   baseUrl?: string;
   apiKeyPrefix?: string;
+  availableProviders?: Array<{ id: string; name: string; baseUrl: string; custom: boolean }>;
+  apiProvider?: string;
+  apiKeys?: Record<string, string | undefined>;
   onSave: (patch: SettingsPatch) => void;
-  onSaveApiKey: (key: string) => void;
 }) {
   const [key, setKey] = useState("");
   const [urlDraft, setUrlDraft] = useState(baseUrl ?? "");
+  const [addOpen, setAddOpen] = useState(false);
+  const [addId, setAddId] = useState("");
+  const [addUrl, setAddUrl] = useState("");
+  const [addName, setAddName] = useState("");
+  // Reset key input when switching providers so the previous
+  // provider's key doesn't linger in the input field.
+  useEffect(() => { setKey(""); }, [apiProvider]);
+  useEffect(() => { setUrlDraft(baseUrl ?? ""); }, [baseUrl]);
+  const providers = availableProviders ?? [];
+  const current = providers.find((p) => p.id === apiProvider);
+  // Only show prefix if this specific provider has a saved key in apiKeys.
+  // No fallback to apiKeyPrefix — that would leak another provider's key.
+  const currentApiKeyPrefix = apiKeys?.[apiProvider ?? ""];
   return (
     <section className="section">
       <div className="stitle">{t("settings.apiSection")}</div>
       <div className="setting-row">
         <div className="l">
+          <div className="n">{t("settings.provider")}</div>
+          <div className="h">{t("settings.providerHint")}</div>
+        </div>
+        <select
+          className="field"
+          value={apiProvider ?? ""}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v) onSave({ apiProvider: v });
+          }}
+        >
+          {providers.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name} {p.custom ? "(custom)" : ""} — {p.baseUrl}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="setting-row">
+        <div className="l">
           <div className="n">{t("settings.apiKey")}</div>
           <div className="h">
-            {apiKeyPrefix
-              ? t("settings.apiKeySet", { prefix: apiKeyPrefix })
+            {currentApiKeyPrefix
+              ? t("settings.apiKeySet", { prefix: currentApiKeyPrefix })
               : t("settings.apiKeyNotSet")}
           </div>
         </div>
@@ -1003,7 +1044,7 @@ function ApiKeySection({
             disabled={!key}
             onClick={() => {
               if (!key) return;
-              onSaveApiKey(key);
+              onSave({ apiKey: key });
               setKey("");
             }}
           >
@@ -1014,7 +1055,7 @@ function ApiKeySection({
       <div className="setting-row">
         <div className="l">
           <div className="n">{t("settings.baseUrl")}</div>
-          <div className="h">{t("settings.baseUrlHint")}</div>
+          <div className="h">{current ? current.baseUrl : t("settings.baseUrlHint")}</div>
         </div>
         <input
           className="field mono"
@@ -1023,6 +1064,77 @@ function ApiKeySection({
           onBlur={() => onSave({ baseUrl: urlDraft.trim() })}
         />
       </div>
+      <div className="setting-row">
+        <div className="l">
+          <div className="n">{t("settings.providerCustom")}</div>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          {!addOpen ? (
+            <button type="button" className="btn" onClick={() => setAddOpen(true)}>
+              {t("settings.providerCustomAdd")}
+            </button>
+          ) : null}
+          {current?.custom ? (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                onSave({ customProviders: { remove: current.id } });
+              }}
+            >
+              {t("settings.providerCustomRemove")}
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {addOpen ? (
+        <div className="setting-row" style={{ flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
+          <div style={{ display: "flex", gap: 6, width: "100%" }}>
+            <input
+              className="field mono"
+              value={addId}
+              onChange={(e) => setAddId(e.target.value)}
+              placeholder={t("settings.providerCustomId")}
+              style={{ flex: 1 }}
+            />
+            <input
+              className="field mono"
+              value={addUrl}
+              onChange={(e) => setAddUrl(e.target.value)}
+              placeholder={t("settings.providerCustomUrl")}
+              style={{ flex: 2 }}
+            />
+            <input
+              className="field mono"
+              value={addName}
+              onChange={(e) => setAddName(e.target.value)}
+              placeholder={t("settings.providerCustomName")}
+              style={{ flex: 1 }}
+            />
+            <button
+              type="button"
+              className="btn primary"
+              disabled={!addId.trim() || !addUrl.trim()}
+              onClick={() => {
+                onSave({
+                  customProviders: {
+                    add: { id: addId.trim(), baseUrl: addUrl.trim(), name: addName.trim() || undefined },
+                  },
+                });
+                setAddId("");
+                setAddUrl("");
+                setAddName("");
+                setAddOpen(false);
+              }}
+            >
+              {t("settings.providerCustomSave")}
+            </button>
+            <button type="button" className="btn" onClick={() => setAddOpen(false)}>
+              {t("settings.apiKeyCancel")}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

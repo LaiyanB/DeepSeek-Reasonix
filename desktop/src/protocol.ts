@@ -370,6 +370,12 @@ export type SettingsEvent = {
   subagentModels?: Record<string, "flash" | "pro">;
   showSystemEvents?: boolean;
   version: string;
+  apiProvider?: string;
+  apiKeys?: Record<string, string | undefined>;
+  customProviders?: Record<string, { baseUrl: string; name?: string }>;
+  availableProviders?: Array<{ id: string; name: string; baseUrl: string; custom: boolean }>;
+  /** Canonical → provider-specific model names for the current provider. */
+  availableModels?: Record<string, string>;
 };
 
 export type QQSettingsEvent = {
@@ -423,6 +429,9 @@ export type SettingsPatch = {
   /** Per-model context-window override (tokens). Keys are model ids; values are the prompt-side token cap. */
   contextTokens?: Record<string, number>;
   showSystemEvents?: boolean;
+  apiProvider?: string;
+  apiKey?: string;
+  customProviders?: { add?: { id: string; baseUrl: string; name?: string }; remove?: string };
 };
 
 export type QQConfigPatch = {

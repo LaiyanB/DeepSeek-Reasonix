@@ -37,6 +37,7 @@ import {
   defaultConfigPath,
   editModeHintShown,
   isReasoningEffort,
+  loadApiProvider,
   loadEndpoint,
   loadEngineeringLifecycleMode,
   loadHistoryScrollMode,
@@ -1032,6 +1033,7 @@ function AppInner({
             // Per-skill model override (frontmatter `model: ...`),
             // else falls through to spawnSubagent's default.
             model: skill.model,
+            providerId: loadApiProvider(),
             allowedTools: skill.allowedTools,
             sink: subagentSinkRef.current,
             // Stamped onto every event so the TUI sink + usage log can
@@ -1051,6 +1053,7 @@ function AppInner({
       prefix,
       tools,
       model,
+      providerId: loadApiProvider(),
       budgetUsd,
       session,
       hooks: hookList,

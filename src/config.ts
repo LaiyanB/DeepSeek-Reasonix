@@ -28,6 +28,125 @@ import { loadWeixinAccount, saveWeixinAccount } from "./weixin/account.js";
 export type EditMode = "review" | "auto" | "yolo" | "plan";
 export type DesktopCloseBehavior = "closeToTray" | "closeToQuit";
 
+// ============================================================================
+// API Provider Presets
+// ============================================================================
+
+export interface ApiProviderPreset {
+  id: string;
+  name: string;
+  baseUrl: string;
+  description: string;
+  models: string[];
+}
+
+export const API_PROVIDER_PRESETS: readonly ApiProviderPreset[] = [
+  {
+    id: "deepseek",
+    name: "DeepSeek 官方",
+    baseUrl: "https://api.deepseek.com",
+    description: "官方直连，最优价格，支持前缀缓存",
+    models: ["deepseek-v4-flash", "deepseek-v4-pro"],
+  },
+  {
+    id: "siliconflow",
+    name: "硅基流动",
+    baseUrl: "https://api.siliconflow.cn/v1",
+    description: "国内首选，有免费额度，个人开发者友好",
+    models: ["deepseek-ai/DeepSeek-V4-Flash", "deepseek-ai/DeepSeek-V4-Pro"],
+  },
+  {
+    id: "aliyun",
+    name: "阿里云百炼",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    description: "企业级，模型最全，Day0 适配新模型",
+    models: ["deepseek-v4-flash", "deepseek-v4-pro"],
+  },
+  {
+    id: "volcengine",
+    name: "火山引擎",
+    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+    description: "字节跳动旗下，综合速度最快",
+    models: ["deepseek-v4-flash", "deepseek-v4-pro"],
+  },
+  {
+    id: "tencent",
+    name: "腾讯云",
+    baseUrl: "https://api.lkeap.cloud.tencent.com/v1",
+    description: "联网搜索能力强，已转至 TokenHub 平台",
+    models: ["deepseek-v4-flash", "deepseek-v4-pro"],
+  },
+  {
+    id: "baidu",
+    name: "百度千帆",
+    baseUrl: "https://qianfan.baidubce.com/v2",
+    description: "8000 万 tokens 免费包",
+    models: ["deepseek-v4-flash", "deepseek-v4-pro"],
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    description: "国际聚合平台，自动故障转移",
+    models: ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"],
+  },
+  {
+    id: "fireworks",
+    name: "Fireworks AI",
+    baseUrl: "https://api.fireworks.ai/inference/v1",
+    description: "高性能推理，支持 1M 上下文",
+    models: ["deepseek-ai/deepseek-v4-flash", "deepseek-ai/deepseek-v4-pro"],
+  },
+  {
+    id: "together",
+    name: "Together AI",
+    baseUrl: "https://api.together.xyz/v1",
+    description: "缓存输入 90% 折扣",
+    models: ["deepseek-ai/DeepSeek-V4-Flash", "deepseek-ai/DeepSeek-V4-Pro"],
+  },
+  {
+    id: "replicate",
+    name: "Replicate",
+    baseUrl: "https://api.replicate.com/v1",
+    description: "按秒计费，适合原型验证",
+    models: ["deepseek-ai/deepseek-v4-flash", "deepseek-ai/deepseek-v4-pro"],
+  },
+];
+
+export const DEFAULT_PROVIDER_ID = "deepseek";
+
+export function resolveProviderPreset(providerId: string): ApiProviderPreset | undefined {
+  return API_PROVIDER_PRESETS.find((p) => p.id === providerId);
+}
+
+export function getProviderModels(providerId: string): string[] {
+  const preset = resolveProviderPreset(providerId);
+  return preset?.models ?? [];
+}
+
+/**
+ * Resolve a canonical model name to the provider-specific name for API calls.
+ * Uses positional mapping: `SUPPORTED_OFFICIAL_MODELS[i]` → `preset.models[i]`.
+ * For custom providers (no preset), returns the canonical name unchanged.
+ */
+export function resolveModelForProvider(providerId: string, canonicalModel: string): string {
+  const preset = resolveProviderPreset(providerId);
+  if (!preset || preset.models.length === 0) return canonicalModel;
+  const idx = SUPPORTED_OFFICIAL_MODELS.indexOf(canonicalModel);
+  if (idx < 0 || idx >= preset.models.length) return canonicalModel;
+  return preset.models[idx] ?? canonicalModel;
+}
+
+/**
+ * Load the active provider + model from config and resolve to the
+ * provider-specific model name ready for API calls.
+ */
+export function loadResolvedModel(path: string = defaultConfigPath()): string {
+  const providerId = loadApiProvider(path);
+  const model = loadModel(path);
+  return resolveModelForProvider(providerId, model);
+}
+
 export const DEFAULT_MODEL = "deepseek-v4-flash";
 
 /** Models the official api.deepseek.com endpoint currently accepts. v3-era
@@ -173,6 +292,12 @@ export interface ProxyConfig {
 export interface ReasonixConfig {
   apiKey?: string;
   baseUrl?: string;
+  /** 当前使用的 API 提供商 ID（默认 "deepseek"） */
+  apiProvider?: string;
+  /** 每个提供商独立的 API Key 存储 */
+  apiKeys?: Record<string, string>;
+  /** 用户自定义 API 提供商，key 为提供商标识，value 为 { baseUrl, name } */
+  customProviders?: Record<string, { baseUrl: string; name?: string }>;
   lang?: LanguageCode;
   /** Persisted DeepSeek model id — `/model <id>` and the dashboard model picker write through this. */
   model?: string;
@@ -780,11 +905,29 @@ export function resolveBaseUrlEnv(): string | undefined {
 // (baseUrl, apiKey) is a tuple: whichever source defines baseUrl owns apiKey too,
 // so a stale env DEEPSEEK_API_KEY doesn't bleed into a custom config baseUrl (#1631).
 export function loadEndpoint(path: string = defaultConfigPath()): ResolvedEndpoint {
+  // 优先级：环境变量 > 配置文件 apiProvider > 配置文件 baseUrl > 默认值
   const envBaseUrl = resolveBaseUrlEnv();
   if (envBaseUrl) {
     return { baseUrl: envBaseUrl, apiKey: process.env.DEEPSEEK_API_KEY };
   }
   const cfg = readConfig(path);
+
+  // 检查是否指定了提供商
+  if (cfg.apiProvider) {
+    const preset = API_PROVIDER_PRESETS.find((p) => p.id === cfg.apiProvider);
+    if (preset) {
+      const apiKey = cfg.apiKeys?.[cfg.apiProvider] ?? cfg.apiKey;
+      return { baseUrl: preset.baseUrl, apiKey };
+    }
+    // 检查用户自定义提供商
+    const custom = cfg.customProviders?.[cfg.apiProvider];
+    if (custom) {
+      const apiKey = cfg.apiKeys?.[cfg.apiProvider] ?? cfg.apiKey;
+      return { baseUrl: custom.baseUrl, apiKey };
+    }
+  }
+
+  // 原有逻辑
   if (cfg.baseUrl) {
     return { baseUrl: cfg.baseUrl, apiKey: cfg.apiKey };
   }
@@ -1113,6 +1256,83 @@ export function saveApiKey(key: string, path: string = defaultConfigPath()): voi
   // A stale process env (User-level Windows env, `.env`, shell rc) shadows config in
   // loadEndpoint's fallback branch — an explicit UI save must win for the current run.
   if (trimmed) process.env.DEEPSEEK_API_KEY = trimmed;
+}
+
+// ============================================================================
+// API Provider Management Functions
+// ============================================================================
+
+export function loadApiProvider(path: string = defaultConfigPath()): string {
+  const cfg = readConfig(path);
+  return cfg.apiProvider ?? DEFAULT_PROVIDER_ID;
+}
+
+export function saveApiProvider(providerId: string, path: string = defaultConfigPath()): void {
+  const cfg = readConfig(path);
+  cfg.apiProvider = providerId;
+  writeConfig(cfg, path);
+}
+
+export function loadApiKeyForProvider(
+  providerId: string,
+  path: string = defaultConfigPath(),
+): string | undefined {
+  const cfg = readConfig(path);
+  return cfg.apiKeys?.[providerId] ?? cfg.apiKey;
+}
+
+export function saveApiKeyForProvider(
+  providerId: string,
+  key: string,
+  path: string = defaultConfigPath(),
+): void {
+  const cfg = readConfig(path);
+  if (!cfg.apiKeys) cfg.apiKeys = {};
+  cfg.apiKeys[providerId] = key.trim();
+  writeConfig(cfg, path);
+  // Also set as current apiKey for backward compatibility
+  cfg.apiKey = key.trim();
+  writeConfig(cfg, path);
+  // Update process env
+  if (key.trim()) process.env.DEEPSEEK_API_KEY = key.trim();
+}
+
+export function loadCustomProviders(
+  path: string = defaultConfigPath(),
+): Record<string, { baseUrl: string; name?: string }> {
+  return readConfig(path).customProviders ?? {};
+}
+
+export function saveCustomProvider(
+  providerId: string,
+  baseUrl: string,
+  name?: string,
+  path: string = defaultConfigPath(),
+): void {
+  const cfg = readConfig(path);
+  if (!cfg.customProviders) cfg.customProviders = {};
+  cfg.customProviders[providerId] = { baseUrl, ...(name ? { name } : {}) };
+  writeConfig(cfg, path);
+}
+
+export function removeCustomProvider(providerId: string, path: string = defaultConfigPath()): void {
+  const cfg = readConfig(path);
+  if (cfg.customProviders) {
+    delete cfg.customProviders[providerId];
+    writeConfig(cfg, path);
+  }
+}
+
+/** 查找提供商信息（内置预设 + 自定义提供商） */
+export function resolveAnyProvider(
+  providerId: string,
+  path: string = defaultConfigPath(),
+): { name: string; baseUrl: string } | undefined {
+  const preset = API_PROVIDER_PRESETS.find((p) => p.id === providerId);
+  if (preset) return { name: preset.name, baseUrl: preset.baseUrl };
+  const custom = readConfig(path).customProviders?.[providerId];
+  if (custom) return { name: custom.name ?? providerId, baseUrl: custom.baseUrl };
+  return undefined;
 }
 
 /** Windows: case-insensitive — NTFS treats `F:\Foo` and `f:\foo` as one directory (#402). */

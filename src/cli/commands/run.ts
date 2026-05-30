@@ -6,6 +6,7 @@ import {
   defaultConfigPath,
   isPlausibleKey,
   loadApiKey,
+  loadApiProvider,
   loadEndpoint,
   loadMaxIterPerTurn,
   loadToolRateLimit,
@@ -151,6 +152,7 @@ export async function runCommand(opts: RunOptions): Promise<void> {
     prefix,
     tools,
     model: opts.model,
+    providerId: loadApiProvider(),
     budgetUsd: opts.budgetUsd,
     maxIterPerTurn: loadMaxIterPerTurn(),
   });

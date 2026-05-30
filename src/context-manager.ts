@@ -69,6 +69,8 @@ export interface ContextManagerDeps {
   getFewShots?: () => readonly ChatMessage[];
   /** Fired when the message log was rewritten by fold; lets the loop drop session-scoped caches whose validity rested on the elided history (e.g. read-before-edit tracker). */
   onLogRewrite?: () => void;
+  /** Provider-resolved model name for fold-summary API calls. Defaults to "deepseek-v4-flash". */
+  summaryModel?: string;
 }
 
 export type PostUsageDecisionKind = "none" | "fold" | "exit-with-summary";
@@ -348,7 +350,9 @@ export class ContextManager {
     messagesToSummarize: ChatMessage[],
     pinnedSkillNames: string[],
   ): Promise<{ content: string; reasoningContent: string }> {
-    const summaryModel = "deepseek-v4-flash";
+    // Provider-resolved model for fold summaries — avoids hardcoded "deepseek-v4-flash"
+    // which would 400 on third-party providers that use different model names.
+    const summaryModel = this.deps.summaryModel ?? "deepseek-v4-flash";
     const healed = healLoadedMessages(messagesToSummarize, DEFAULT_MAX_RESULT_CHARS).messages;
     const agentSystem = this.deps.getSystemPrompt();
     const fewShots = this.deps.getFewShots?.() ?? [];

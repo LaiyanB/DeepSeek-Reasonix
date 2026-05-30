@@ -1,6 +1,7 @@
 import { DeepSeekClient } from "../client.js";
 import {
   type EditMode,
+  loadApiProvider,
   loadEditMode,
   loadEndpoint,
   loadFilesystemOutlineThresholdBytes,
@@ -129,6 +130,7 @@ export async function buildCodeToolset(opts: CodeToolsetOpts): Promise<CodeTools
         system: skill.body,
         task,
         model: skill.model,
+        providerId: loadApiProvider(),
         allowedTools: skill.allowedTools,
         skillName: skill.name,
         // Late-bound: the TUI's `useSubagent` writes the live callback into

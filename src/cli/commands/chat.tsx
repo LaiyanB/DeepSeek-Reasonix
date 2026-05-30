@@ -4,6 +4,7 @@ import {
   type ReasoningEffort,
   bridgeEndpointEnv,
   loadApiKey,
+  loadApiProvider,
   loadHistoryScrollMode,
   loadToolRateLimit,
   normalizeMcpConfig,
@@ -117,6 +118,7 @@ export interface ChatOptions {
 
 interface RootProps extends ChatOptions {
   initialKey: string | undefined;
+  apiProvider: string;
   tools: ToolRegistry | undefined;
   mcpSpecs: string[];
   mcpServers: McpServerSummary[];
@@ -146,6 +148,7 @@ interface RootProps extends ChatOptions {
 
 function Root({
   initialKey,
+  apiProvider,
   tools,
   mcpSpecs,
   mcpServers,
@@ -177,7 +180,8 @@ function Root({
     };
   }, [appProps.codeMode, activeRoot]);
 
-  if (!key) {
+  // 如果没有 API Key 或者没有配置提供商，显示 Setup 界面
+  if (!key || apiProvider === "deepseek") {
     return (
       <KeystrokeProvider>
         <Setup
@@ -273,6 +277,7 @@ export async function chatCommand(opts: ChatOptions): Promise<void> {
   markPhase("chat_command_enter");
   loadDotenv();
   const initialKey = loadApiKey();
+  const apiProvider = loadApiProvider();
   markPhase("config_loaded");
 
   const requestedSpecs = opts.mcp ?? [];
@@ -444,6 +449,7 @@ export async function chatCommand(opts: ChatOptions): Promise<void> {
   const { waitUntilExit } = render(
     <Root
       initialKey={initialKey}
+      apiProvider={apiProvider}
       tools={tools}
       mcpSpecs={mcpSpecs}
       mcpServers={mcpServers}

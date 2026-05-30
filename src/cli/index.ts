@@ -710,6 +710,124 @@ program
     },
   );
 
+program
+  .command("provider")
+  .description("管理 API 提供商")
+  .option("--list", "列出所有可用提供商")
+  .option("--set <id>", "设置当前提供商")
+  .option("--show", "显示当前提供商")
+  .option("--key <key>", "为当前提供商设置 API Key")
+  .option("--add <id>", "添加自定义提供商")
+  .option("--url <url>", "自定义提供商 Base URL（配合 --add）")
+  .option("--name <name>", "自定义提供商显示名称（配合 --add）")
+  .option("--remove <id>", "删除自定义提供商")
+  .action(
+    async (opts: {
+      list?: boolean;
+      set?: string;
+      show?: boolean;
+      key?: string;
+      add?: string;
+      url?: string;
+      name?: string;
+      remove?: string;
+    }) => {
+      const {
+        API_PROVIDER_PRESETS,
+        loadApiProvider,
+        saveApiProvider,
+        loadApiKeyForProvider,
+        saveApiKeyForProvider,
+        resolveProviderPreset,
+        loadCustomProviders,
+        saveCustomProvider,
+        removeCustomProvider,
+        resolveAnyProvider,
+      } = await import("../config.js");
+
+      if (opts.add) {
+        if (!opts.url) {
+          console.error("缺少 --url 参数");
+          console.error("用法: reasonix provider --add <id> --url <url> [--name <name>]");
+          process.exit(1);
+        }
+        saveCustomProvider(opts.add, opts.url, opts.name);
+        console.log(`已添加自定义提供商: ${opts.name ?? opts.add}`);
+        console.log(`  Base URL: ${opts.url}`);
+        return;
+      }
+
+      if (opts.remove) {
+        removeCustomProvider(opts.remove);
+        console.log(`已删除自定义提供商: ${opts.remove}`);
+        return;
+      }
+
+      if (opts.list) {
+        console.log("可用的 API 提供商:\n");
+        for (const p of API_PROVIDER_PRESETS) {
+          const marker = p.id === "deepseek" ? " (默认)" : "";
+          console.log(`  ${p.id}: ${p.name}${marker}`);
+          console.log(`    ${p.description}`);
+          console.log(`    Base URL: ${p.baseUrl}`);
+          console.log("");
+        }
+        const customs = loadCustomProviders();
+        const customKeys = Object.keys(customs);
+        if (customKeys.length > 0) {
+          console.log("自定义提供商:\n");
+          for (const id of customKeys) {
+            const c = customs[id]!;
+            console.log(`  ${id}: ${c.name ?? id}`);
+            console.log(`    Base URL: ${c.baseUrl}`);
+            console.log("");
+          }
+        }
+        return;
+      }
+
+      if (opts.show) {
+        const providerId = loadApiProvider();
+        const provider = resolveAnyProvider(providerId);
+        const apiKey = loadApiKeyForProvider(providerId);
+        console.log(`当前提供商: ${provider?.name ?? providerId}`);
+        console.log(`Base URL: ${provider?.baseUrl ?? "未知"}`);
+        console.log(`API Key: ${apiKey ? "已设置" : "未设置"}`);
+        return;
+      }
+
+      if (opts.set) {
+        const provider = resolveAnyProvider(opts.set);
+        if (!provider) {
+          console.error(`未知提供商: ${opts.set}`);
+          console.error("使用 --list 查看所有可用提供商");
+          console.error("或使用 --add 添加自定义提供商");
+          process.exit(1);
+        }
+        saveApiProvider(opts.set);
+        console.log(`已切换到提供商: ${provider.name}`);
+        return;
+      }
+
+      if (opts.key) {
+        const providerId = loadApiProvider();
+        const provider = resolveAnyProvider(providerId);
+        saveApiKeyForProvider(providerId, opts.key);
+        console.log(`已为 ${provider?.name ?? providerId} 设置 API Key`);
+        return;
+      }
+
+      // Default: show help
+      console.log("用法:");
+      console.log("  reasonix provider --list           列出所有可用提供商");
+      console.log("  reasonix provider --show           显示当前提供商");
+      console.log("  reasonix provider --set <id>       设置当前提供商");
+      console.log("  reasonix provider --key <key>      为当前提供商设置 API Key");
+      console.log("  reasonix provider --add <id> --url <url> [--name <name>]  添加自定义提供商");
+      console.log("  reasonix provider --remove <id>    删除自定义提供商");
+    },
+  );
+
 program.parseAsync(process.argv).catch((err) => {
   console.error(err);
   process.exit(1);

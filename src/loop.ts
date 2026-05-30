@@ -1,5 +1,5 @@
 import { type DeepSeekClient, Usage } from "./client.js";
-import type { ReasoningEffort } from "./config.js";
+import { type ReasoningEffort, resolveModelForProvider } from "./config.js";
 import type { PauseGate } from "./core/pause-gate.js";
 import { pauseGate as defaultPauseGate } from "./core/pause-gate.js";
 import { type HookPayload, type ResolvedHook, runHooks } from "./hooks.js";
@@ -100,6 +100,9 @@ export interface CacheFirstLoopOptions {
   prefix: ImmutablePrefix;
   tools?: ToolRegistry;
   model?: string;
+  /** ID of the current API provider, used to resolve model names for
+   *  auto-escalation and fold-summary calls. Defaults to "deepseek". */
+  providerId?: string;
   stream?: boolean;
   reasoningEffort?: ReasoningEffort;
   /** Per-turn output token cap passed as `max_tokens`. Undefined = no cap (server default). */
@@ -163,6 +166,10 @@ export class CacheFirstLoop {
   static readonly DEFAULT_MAX_ITER_PER_TURN = 50;
   /** Files the model has read this session; gates edit_file / multi_edit so SEARCH text matches on-disk bytes. Cleared on fold / mechanical truncate (the model's byte-level view of the elided history is gone). In-memory only — naturally empty on resume. */
   readonly readTracker = new ReadTracker();
+
+  /** Resolved at construction so auto-escalation and fold-summary calls
+   *  use the provider-specific model name. */
+  readonly providerId: string;
 
   // Mutable via configure() — slash commands in the TUI / library callers tweak
   // these mid-session so users don't have to restart.
@@ -241,6 +248,7 @@ export class CacheFirstLoop {
       sessionPath: this.sessionName ? sessionPath(this.sessionName) : undefined,
     });
     this.model = opts.model ?? "deepseek-v4-flash";
+    this.providerId = opts.providerId ?? "deepseek";
     this.reasoningEffort = opts.reasoningEffort ?? "high";
     this.maxOutputTokens = opts.maxOutputTokens;
     this.budgetUsd =
@@ -315,6 +323,9 @@ export class CacheFirstLoop {
       this.resumedMessageCount = 0;
     }
 
+    // Resolve the fold summary model to the provider-specific name.
+    const foldSummaryModel = resolveModelForProvider(this.providerId, "deepseek-v4-flash");
+
     this.context = new ContextManager({
       client: this.client,
       log: this.log,
@@ -326,6 +337,7 @@ export class CacheFirstLoop {
       getToolSpecs: () => this.prefix.toolSpecs,
       getFewShots: () => this.prefix.fewShots,
       onLogRewrite: () => this.readTracker.reset(),
+      summaryModel: foldSummaryModel,
     });
   }
 
@@ -950,10 +962,12 @@ export class CacheFirstLoop {
 
       try {
         callModel = this.model;
+        // Resolve canonical model → provider-specific name for the API call.
+        const apiModel = resolveModelForProvider(this.providerId, callModel);
         if (this.stream) {
           const result = yield* streamModelResponse({
             client: this.client,
-            model: callModel,
+            model: apiModel,
             messages,
             toolSpecs,
             signal,
@@ -967,11 +981,11 @@ export class CacheFirstLoop {
           usage = result.usage;
         } else {
           const resp = await this.client.chat({
-            model: callModel,
+            model: apiModel,
             messages,
             tools: toolSpecs.length ? toolSpecs : undefined,
             signal,
-            thinking: thinkingModeForModel(callModel),
+            thinking: thinkingModeForModel(apiModel),
             reasoningEffort: this.reasoningEffort,
             maxTokens: this.maxOutputTokens,
           });

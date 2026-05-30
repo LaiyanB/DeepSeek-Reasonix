@@ -302,6 +302,12 @@ export type Settings = {
   contextTokens?: Record<string, number>;
   showSystemEvents?: boolean;
   version: string;
+  apiProvider?: string;
+  apiKeys?: Record<string, string | undefined>;
+  customProviders?: Record<string, { baseUrl: string; name?: string }>;
+  availableProviders?: Array<{ id: string; name: string; baseUrl: string; custom: boolean }>;
+  /** Canonical → provider-specific model names for the current provider. */
+  availableModels?: Record<string, string>;
 };
 
 export type BalanceInfoItem = {
@@ -420,6 +426,9 @@ function sanitizeSettingsPatch(patch: SettingsPatch): Partial<Settings> {
     exaApiKey: _exa,
     ollamaApiKey: _ollama,
     webSearchEndpoint,
+    apiProvider: _apiProvider,
+    apiKey: _apiKey,
+    customProviders: _customProviders,
     ...rest
   } = patch;
   const sanitized: Partial<Settings> = { ...rest };
@@ -1049,6 +1058,11 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
           subagentModels: ev.subagentModels,
           showSystemEvents: ev.showSystemEvents,
           version: ev.version,
+          apiProvider: ev.apiProvider,
+          apiKeys: ev.apiKeys,
+          customProviders: ev.customProviders,
+          availableProviders: ev.availableProviders,
+          availableModels: ev.availableModels,
         },
       };
     }
@@ -1596,10 +1610,6 @@ function TabRuntime({
   const saveQQConfig = useCallback(
     (patch: { appId?: string; appSecret?: string; sandbox: boolean }) =>
       sendRpc({ cmd: "qq_config_save", ...patch }),
-    [sendRpc],
-  );
-  const saveApiKey = useCallback(
-    (key: string) => sendRpc({ cmd: "setup_save_key", key }),
     [sendRpc],
   );
   const addMcpSpec = useCallback(
@@ -2877,7 +2887,6 @@ function TabRuntime({
             qq={state.qq}
             onClose={() => setSettingsOpen(false)}
             onSave={saveSettings}
-            onSaveApiKey={saveApiKey}
             onLoadQQ={loadQQSettings}
             onConnectQQ={connectQQ}
             onDisconnectQQ={disconnectQQ}
