@@ -664,6 +664,8 @@ export const zhCN: typeof en = {
     hideTools: "收起工具",
     availableTools: "{count} 个可用工具",
     noTools: "已连接，但该服务器未暴露可调用工具",
+    toggleOn: "开启",
+    toggleOff: "关闭",
   },
   contextPanel: {
     reservedKey: "预留",

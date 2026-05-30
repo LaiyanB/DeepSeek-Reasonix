@@ -631,6 +631,7 @@ export type OutgoingCommand = { tabId?: string } & (
   | { cmd: "mcp_import_servers"; servers: ImportedMcpServer[] }
   | { cmd: "mcp_specs_update"; raw: string; server: ImportedMcpServer }
   | { cmd: "mcp_specs_retry"; raw: string }
+  | { cmd: "mcp_specs_toggle"; raw: string }
   | { cmd: "skills_get" }
   | { cmd: "skill_run"; name: string; args?: string }
   | { cmd: "jobs_list" }

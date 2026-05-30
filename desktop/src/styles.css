@@ -5718,6 +5718,63 @@ html:not([data-platform="macos"]) .cmdk-row .kb .shortcut kbd[data-key="mod"] {
 .mcp-server-card .rot {
   transform: rotate(180deg);
 }
+.mcp-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.mcp-toggle.on {
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+}
+.mcp-toggle.off {
+  background: var(--bg-2);
+  border-color: var(--border);
+}
+.mcp-toggle:hover {
+  border-color: color-mix(in srgb, var(--fg) 30%, var(--border));
+}
+.mcp-toggle-track {
+  position: relative;
+  width: 28px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--bg-3);
+  transition: background 0.2s ease;
+}
+.mcp-toggle.on .mcp-toggle-track {
+  background: var(--success);
+}
+.mcp-toggle.off .mcp-toggle-track {
+  background: var(--muted);
+}
+.mcp-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.2s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+.mcp-toggle.on .mcp-toggle-thumb {
+  transform: translateX(12px);
+}
+.mcp-toggle.off .mcp-toggle-thumb {
+  transform: translateX(0);
+}
+.mcp-toggle-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg);
+}
 .mcp-tools-detail {
   margin-top: 10px;
   padding: 10px;

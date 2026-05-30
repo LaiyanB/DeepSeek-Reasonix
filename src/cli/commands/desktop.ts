@@ -245,6 +245,7 @@ type InMessage = { tabId?: string } & (
   | { cmd: "mcp_import_servers"; servers: unknown[] }
   | { cmd: "mcp_specs_update"; raw: string; server: unknown }
   | { cmd: "mcp_specs_retry"; raw: string }
+  | { cmd: "mcp_specs_toggle"; raw: string }
   | { cmd: "skills_get" }
   | { cmd: "skill_run"; name: string; args?: string }
   | { cmd: "jobs_list" }
@@ -3108,6 +3109,48 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
         void bridgeTabMcp(tab);
       } catch (err) {
         emit({ type: "$error", message: `mcp_specs_retry: ${(err as Error).message}` }, tab.id);
+      }
+      return;
+    }
+    if (msg.cmd === "mcp_specs_toggle") {
+      try {
+        const cfg = readConfig();
+        const parsed = parseMcpSpec(msg.raw);
+        const isCurrentlyDisabled =
+          (parsed.name && cfg.mcpServers?.[parsed.name]?.disabled === true) ||
+          (parsed.name && (cfg.mcpDisabled ?? []).includes(parsed.name));
+        const serverCfg = parsed.name ? cfg.mcpServers?.[parsed.name] : undefined;
+        if (parsed.name && serverCfg) {
+          serverCfg.disabled = !isCurrentlyDisabled;
+          if (!serverCfg.disabled) serverCfg.disabled = undefined;
+          if (Object.keys(serverCfg).length === 0 && cfg.mcpServers) {
+            delete cfg.mcpServers[parsed.name];
+          }
+          if (cfg.mcpServers && Object.keys(cfg.mcpServers).length === 0) {
+            cfg.mcpServers = undefined;
+          }
+        } else {
+          const disabled = new Set(cfg.mcpDisabled ?? []);
+          if (parsed.name && isCurrentlyDisabled) {
+            disabled.delete(parsed.name);
+          } else if (parsed.name) {
+            disabled.add(parsed.name);
+          }
+          cfg.mcpDisabled = disabled.size > 0 ? [...disabled].sort() : undefined;
+        }
+        writeConfig(cfg);
+        if (isCurrentlyDisabled) {
+          tab.mcpStatuses.delete(msg.raw);
+        } else {
+          tab.mcpStatuses.set(msg.raw, { kind: "disabled" });
+        }
+        emitMcpSpecs(tab);
+        void tab.mcpRuntime?.removeSpec(msg.raw, tab.runtime?.loop).catch(() => {});
+        if (!isCurrentlyDisabled) {
+          void tab.mcpRuntime?.addSpec(msg.raw, tab.runtime?.loop).catch(() => {});
+        }
+      } catch (err) {
+        emit({ type: "$error", message: `mcp_specs_toggle: ${(err as Error).message}` }, tab.id);
       }
       return;
     }
