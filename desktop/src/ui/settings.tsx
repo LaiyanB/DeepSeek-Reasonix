@@ -90,6 +90,7 @@ export function SettingsModal({
   onRemoveMcpSpec,
   onUpdateMcpSpec,
   onRetryMcpSpec,
+  onToggleMcpSpec,
   onReadMemory,
 }: {
   settings: SettingsType;
@@ -129,6 +130,7 @@ export function SettingsModal({
   onRemoveMcpSpec: (spec: string) => void;
   onUpdateMcpSpec: (raw: string, server: ImportedMcpServer) => void;
   onRetryMcpSpec: (raw: string) => void;
+  onToggleMcpSpec: (raw: string) => void;
   onReadMemory: (path: string) => void;
 }) {
   const [page, setPage] = useState<PageId>(initialPage ?? "general");
@@ -213,6 +215,7 @@ export function SettingsModal({
                 onRemove={onRemoveMcpSpec}
                 onUpdate={onUpdateMcpSpec}
                 onRetry={onRetryMcpSpec}
+                onToggle={onToggleMcpSpec}
               />
             )}
             {page === "skills" && (
@@ -1146,6 +1149,7 @@ function PageMCP({
   onRemove,
   onUpdate,
   onRetry,
+  onToggle,
 }: {
   specs: McpSpecInfo[];
   bridged: boolean;
@@ -1156,6 +1160,7 @@ function PageMCP({
   onRemove: (spec: string) => void;
   onUpdate: (raw: string, server: ImportedMcpServer) => void;
   onRetry: (raw: string) => void;
+  onToggle: (raw: string) => void;
 }) {
   const [draft, setDraft] = useState("");
   const [importing, setImporting] = useState(false);
@@ -1268,6 +1273,7 @@ function PageMCP({
               onEdit={setEditing}
               onRetry={onRetry}
               onRemove={onRemove}
+              onToggle={onToggle}
             />
           ))
         )}

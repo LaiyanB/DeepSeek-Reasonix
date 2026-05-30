@@ -1618,6 +1618,10 @@ function TabRuntime({
     (raw: string) => sendRpc({ cmd: "mcp_specs_retry", raw }),
     [sendRpc],
   );
+  const toggleMcpSpec = useCallback(
+    (raw: string) => sendRpc({ cmd: "mcp_specs_toggle", raw }),
+    [sendRpc],
+  );
   const newChat = useCallback(() => {
     clearAbortDraft();
     resetPromptHistoryNav();
@@ -2891,6 +2895,7 @@ function TabRuntime({
             onRemoveMcpSpec={removeMcpSpec}
             onUpdateMcpSpec={updateMcpSpec}
             onRetryMcpSpec={retryMcpSpec}
+            onToggleMcpSpec={toggleMcpSpec}
             onReadMemory={(path) => sendRpc({ cmd: "memory_read", path })}
           />
         ) : null}

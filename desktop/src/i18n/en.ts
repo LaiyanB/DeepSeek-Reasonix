@@ -658,6 +658,8 @@ export const en = {
     hideTools: "Hide tools",
     availableTools: "{count} available tools",
     noTools: "Connected, but this server did not expose callable tools",
+    toggleOn: "ON",
+    toggleOff: "OFF",
   },
   jobs: {
     title: "Background jobs",

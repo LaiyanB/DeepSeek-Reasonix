@@ -46,12 +46,14 @@ export function McpServerCard({
   onEdit,
   onRetry,
   onRemove,
+  onToggle,
 }: {
   spec: McpSpecInfo;
   mode?: McpServerCardMode;
   onEdit?: (spec: McpSpecInfo) => void;
   onRetry?: (raw: string) => void;
   onRemove?: (raw: string) => void;
+  onToggle?: (raw: string) => void;
 }) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -66,6 +68,7 @@ export function McpServerCard({
     spec.status === "failed" && spec.statusReason
       ? `${statusText}\n${spec.statusReason}`
       : statusText;
+  const isDisabled = spec.status === "disabled";
 
   return (
     <div className="scard mcp-server-card" data-mode={mode} data-status={spec.status}>
@@ -85,6 +88,21 @@ export function McpServerCard({
           </Tooltip>
         </div>
         <div className="mcp-card-actions">
+          {mode === "settings" && onToggle && !spec.parseError ? (
+            <button
+              type="button"
+              className={`btn ghost mcp-toggle ${isDisabled ? "off" : "on"}`}
+              onClick={() => onToggle(spec.raw)}
+              title={isDisabled ? t("mcpCard.toggleOn") : t("mcpCard.toggleOff")}
+            >
+              <span className="mcp-toggle-track">
+                <span className="mcp-toggle-thumb" />
+              </span>
+              <span className="mcp-toggle-label">
+                {isDisabled ? t("mcpCard.toggleOff") : t("mcpCard.toggleOn")}
+              </span>
+            </button>
+          ) : null}
           {canExpandTools ? (
             <button type="button" className="btn ghost" onClick={() => setToolsOpen((v) => !v)}>
               <I.chev size={13} className={toolsOpen ? "rot" : ""} />
